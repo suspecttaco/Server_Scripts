@@ -119,7 +119,7 @@ validar_cidr() {
 # $2 = "allow_reserved" para permitir rangos especiales (loopback, multicast, etc.)
 validar_ip() {
     local ip=$1
-    local allow_reserved=$2
+    local allow_reserved=${2:-}
 
     [ -z "$ip" ] && return 1
 
@@ -222,10 +222,10 @@ ip_en_red() {
 }
 
 # Devuelve 0 si la IP es igual a la direccion de red.
-ip_es_red() { [ "$1" = "$2" ]; }
+ip_es_red() { [ "${1:-}" = "${2:-}" ]; }
 
 # Devuelve 0 si la IP es igual al broadcast.
-ip_es_broadcast() { [ "$1" = "$2" ]; }
+ip_es_broadcast() { [ "${1:-}" = "${2:-}" ]; }
 
 # Devuelve 0 si la IP esta dentro del rango [inicio, fin].
 ip_en_rango() {
@@ -249,7 +249,7 @@ ip_en_rango() {
 #   formato correcto → pertenece al segmento → no es red → no es broadcast.
 # $1 = ip   $2 = etiqueta para mensajes de error
 validar_ip_en_segmento() {
-    local ip=$1 etiqueta=$2
+    local ip=$1 etiqueta=${2:-}
 
     if ! validar_ip "$ip"; then
         msg_error "IP $etiqueta invalida o en segmento no usable"
@@ -274,7 +274,7 @@ validar_ip_en_segmento() {
 # Permite vacio (Enter) para omitir — la variable destino queda en "".
 # $1 = nombre de variable destino   $2 = prompt   $3 = funcion de validacion extra (opcional)
 pedir_ip_loop() {
-    local __var=$1 prompt=$2 validador=$3
+    local __var=$1 prompt=$2 validador=${3:-}
     local ip_leida intentos=0
 
     while [ $intentos -lt $MAX_ATTEMPTS ]; do
