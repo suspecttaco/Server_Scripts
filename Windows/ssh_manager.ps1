@@ -325,8 +325,8 @@ function Invoke-ConfigureSsh {
     Write-Host "Resumen de configuracion SSH" -ForegroundColor White
     Write-Host ""
     Write-Host "  " -NoNewline; Write-Host "Puerto:                 " -ForegroundColor Cyan -NoNewline; Write-Host $newPort
-    Write-Host "  " -NoNewline; Write-Host "Interfaz firewall:      " -ForegroundColor Cyan -NoNewline; Write-Host (if ($INTERFAZ_SSH) { $INTERFAZ_SSH } else { "perfil Any" })
-    Write-Host "  " -NoNewline; Write-Host "PasswordAuthentication: " -ForegroundColor Cyan -NoNewline; Write-Host $passauth
+    $ifazDisplay = if ($INTERFAZ_SSH) { $INTERFAZ_SSH } else { "perfil Any" }
+    Write-Host "  " -NoNewline; Write-Host "Interfaz firewall:      " -ForegroundColor Cyan -NoNewline; Write-Host $ifazDisplay    Write-Host "  " -NoNewline; Write-Host "PasswordAuthentication: " -ForegroundColor Cyan -NoNewline; Write-Host $passauth
     Write-Host "  " -NoNewline; Write-Host "PermitRootLogin:        " -ForegroundColor Cyan -NoNewline; Write-Host $rootLogin
     Write-Host "  " -NoNewline; Write-Host "MaxAuthTries:           " -ForegroundColor Cyan -NoNewline; Write-Host $maxtries
     Write-Host "  " -NoNewline; Write-Host "ClientAliveInterval:    " -ForegroundColor Cyan -NoNewline; Write-Host $alive
