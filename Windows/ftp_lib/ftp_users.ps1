@@ -1,14 +1,13 @@
 ﻿# =============================================================================
-# ftp_lib/ftp_users.ps1 - CRUD de usuarios FTP
+# ftp_lib/ftp_users.ps1 — CRUD de usuarios FTP
 #
 # Cada usuario FTP tiene:
 #   - Cuenta local Windows con password
-#   - Miembro de su grupo FTP y de ftp_users
+#   - Miembro de su grupo FTP (ej: reprobados) y de ftp_users
 #   - Carpeta C:\FTP\LocalUser\<usuario>\ (User Isolation IIS FTP)
-#   - Carpeta personal\ fisica con R/W completo
-#   - Virtual Directory "general"  -> C:\FTP\LocalUser\Public   (via IIS)
-#   - Virtual Directory "<grupo>"  -> C:\FTP\grupos\<grupo>     (via IIS)
-#   - Sin acceso interactivo (SeDenyInteractiveLogonRight)
+#   - Virtual Directory "general" -> C:\FTP\LocalUser\Public
+#   - Virtual Directory "<grupo>" -> C:\FTP\grupos\<grupo>
+#   - Sin acceso interactivo (User Rights: Deny log on locally)
 # =============================================================================
 
 $script:_USUARIOS_RESERVADOS = @(
@@ -32,12 +31,15 @@ function Test-FtpUsername {
     return $true
 }
 
+# Convierte texto plano a SecureString
 function ConvertTo-SecurePass {
     param([string]$plain)
     return ConvertTo-SecureString $plain -AsPlainText -Force
 }
 
 function Read-ConfirmedPassword {
+    # Devuelve el texto plano validado contra la politica del sistema.
+    # El llamador convierte a SecureString con ConvertTo-SecurePass justo antes de usarla.
     while ($true) {
         $p1 = Read-Host -Prompt "-> Contrasena" -AsSecureString
         $p2 = Read-Host -Prompt "-> Confirma contrasena" -AsSecureString
@@ -48,12 +50,13 @@ function Read-ConfirmedPassword {
         if ([string]::IsNullOrEmpty($plain1)) { msg_error "La contrasena no puede estar vacia"; continue }
         if ($plain1 -ne $plain2) { msg_error "Las contrasenas no coinciden"; continue }
 
+        # Verificar contra la politica del sistema con usuario temporal
         $tmpUser = "_chk$([System.Guid]::NewGuid().ToString('N').Substring(0,8))"
         $secPass = ConvertTo-SecurePass $plain1
         try {
             New-LocalUser -Name $tmpUser -Password $secPass -ErrorAction Stop | Out-Null
             Remove-LocalUser -Name $tmpUser -ErrorAction SilentlyContinue
-            return $plain1
+            return $plain1   # devolver texto plano
         } catch {
             Remove-LocalUser -Name $tmpUser -ErrorAction SilentlyContinue
             msg_error "La contrasena no cumple la politica del sistema"
@@ -117,6 +120,7 @@ function New-FtpWindowsUser {
     param([string]$usuario, [string]$password, [string]$grupo)
     try {
         $secPass = ConvertTo-SecurePass $password
+        # Crear cuenta local
         New-LocalUser -Name $usuario `
             -Password $secPass `
             -FullName "FTP: $usuario" `
@@ -124,9 +128,12 @@ function New-FtpWindowsUser {
             -PasswordNeverExpires `
             -ErrorAction Stop | Out-Null
 
+        # Agregar a grupo FTP especifico y a ftp_users
         Add-LocalGroupMember -Group $grupo                  -Member $usuario -ErrorAction SilentlyContinue
         Add-LocalGroupMember -Group $script:FTP_GROUP_ALL   -Member $usuario -ErrorAction SilentlyContinue
 
+        # Denegar inicio de sesion local (equivalente a nologin en Linux)
+        # Se hace via Local Security Policy / secedit
         Deny-LocalLogon $usuario
 
         msg_success "Usuario Windows '$usuario' creado (grupo: $grupo)"
@@ -137,12 +144,14 @@ function New-FtpWindowsUser {
     }
 }
 
+# Deniega el inicio de sesion local al usuario via secedit
 function Deny-LocalLogon {
     param([string]$usuario)
     try {
         $tmpCfg = "$env:TEMP\ftp_secedit_deny.inf"
         $tmpDb  = "$env:TEMP\ftp_secedit.sdb"
 
+        # Exportar politica actual
         secedit /export /cfg $tmpCfg /quiet 2>$null
 
         $content = Get-Content $tmpCfg -Raw
@@ -179,6 +188,7 @@ function New-FtpUsersLote {
         Write-Separator
         msg_info "Usuario $($creados+1) de $total"
 
+        # Nombre
         $usuario = ""
         while ($true) {
             $usuario = Read-Input "Nombre de usuario FTP: "
@@ -188,9 +198,13 @@ function New-FtpUsersLote {
             break
         }
 
-        $pass  = Read-ConfirmedPassword
+        # Contrasena
+        $pass = Read-ConfirmedPassword
+
+        # Grupo
         $grupo = Select-FtpGroup
 
+        # Crear
         if (New-FtpWindowsUser $usuario $pass $grupo) {
             New-FtpUserDirectories $usuario $grupo
             Meta-Set $usuario $grupo
@@ -224,22 +238,18 @@ function Update-FtpUser {
             msg_error "'$nuevoNombre' ya en uso"
         } else {
             try {
-                # Eliminar VDirs del nombre anterior antes de renombrar
-                Remove-FtpUserVirtualDirectories $usuario
-
                 Rename-LocalUser -Name $usuario -NewName $nuevoNombre -ErrorAction Stop
-
+                # Renombrar carpeta
                 $oldDir = "$script:FTP_ROOT\LocalUser\$usuario"
                 $newDir = "$script:FTP_ROOT\LocalUser\$nuevoNombre"
                 if (Test-Path $oldDir) { Rename-Item $oldDir $newDir }
-
+                # Actualizar meta
                 $lines = Get-Content $script:FTP_META | ForEach-Object { $_ -replace "^${usuario}:", "${nuevoNombre}:" }
                 $lines | Set-Content $script:FTP_META
-
-                # Recrear VDirs con el nuevo nombre
-                Add-FtpVirtualDirectory $nuevoNombre "general"    $script:FTP_GENERAL
-                Add-FtpVirtualDirectory $nuevoNombre $grupoActual "$script:FTP_ROOT\grupos\$grupoActual"
-
+                # Actualizar Virtual Directories
+                Remove-FtpUserVirtualDirectories $usuario
+                Add-FtpVirtualDirectory -usuario $nuevoNombre -vdirName "general"      -physicalPath $script:FTP_GENERAL
+                Add-FtpVirtualDirectory -usuario $nuevoNombre -vdirName $grupoActual   -physicalPath "$script:FTP_ROOT\grupos\$grupoActual"
                 msg_success "Usuario renombrado: '$usuario' -> '$nuevoNombre'"
                 $usuario = $nuevoNombre
             } catch {
@@ -265,8 +275,8 @@ function Update-FtpUser {
         $nuevoGrupo = Select-FtpGroup
         if ($nuevoGrupo -ne $grupoActual) {
             try {
-                Remove-LocalGroupMember -Group $grupoActual -Member $usuario -ErrorAction SilentlyContinue
-                Add-LocalGroupMember    -Group $nuevoGrupo  -Member $usuario -ErrorAction Stop
+                Remove-LocalGroupMember -Group $grupoActual  -Member $usuario -ErrorAction SilentlyContinue
+                Add-LocalGroupMember    -Group $nuevoGrupo   -Member $usuario -ErrorAction Stop
                 Meta-Set $usuario $nuevoGrupo
                 Update-FtpUserVirtualDirectories $usuario $nuevoGrupo
                 msg_success "Grupo: '$grupoActual' -> '$nuevoGrupo'"
@@ -295,7 +305,7 @@ function Remove-FtpUser {
 
     $delDir = Confirm-Action "Eliminar directorio del usuario?"
 
-    # Eliminar Virtual Directories de IIS
+    # Eliminar Virtual Directories
     Remove-FtpUserVirtualDirectories $usuario
 
     # Eliminar usuario Windows
