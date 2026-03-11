@@ -11,6 +11,7 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
+GRAY='\033[0;90m'
 NC='\033[0m'
 
 separator() {
@@ -23,3 +24,31 @@ msg_info()    { echo -e "${NC}[ ${BLUE}INFO ${NC} ] $1"; }
 msg_alert()   { echo -e "${NC}[ ${YELLOW}ALERT ${NC}] $1"; }
 msg_process() { echo -e "${NC}[  ${CYAN}---  ${NC}] $1"; }
 msg_input()   { echo -ne "${CYAN}->${NC} $1"; }
+
+# Pausa hasta que el usuario presione Enter
+msg_pause() {
+    echo ""
+    read -rp "  Presiona Enter para continuar..."
+}
+
+# Lee input del usuario con prompt formateado y retorna en la variable indicada
+# Uso: input_read "Ingrese el usuario" mi_variable
+input_read() {
+    local prompt="$1"
+    local var_name="$2"
+    echo -ne "${CYAN}->${NC} $prompt: "
+    read -r "$var_name"
+}
+
+# Cabeceras visuales
+#draw_line() {
+#    echo "────────────────────────────────────────"
+#}
+
+draw_header() {
+    local title="$1"
+    echo ""
+    separator
+    echo "  $title"
+    separator
+}
