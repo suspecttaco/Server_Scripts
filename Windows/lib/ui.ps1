@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ui.ps1 — Utilidades de interfaz: colores, mensajes, separador
+# lib/ui.ps1 — Utilidades de interfaz: colores, mensajes, separador
 # Uso: . .\ui.ps1
 # =============================================================================
 
@@ -13,3 +13,9 @@ function msg_info    { param([string]$msg) Write-Host "[ " -NoNewline; Write-Hos
 function msg_alert   { param([string]$msg) Write-Host "[ " -NoNewline; Write-Host "ALERT " -ForegroundColor Yellow -NoNewline; Write-Host "] $msg" }
 function msg_process { param([string]$msg) Write-Host "[  " -NoNewline; Write-Host "---  " -ForegroundColor Cyan -NoNewline; Write-Host "] $msg" }
 function msg_input   { param([string]$msg) Write-Host "-> $msg" -ForegroundColor Cyan -NoNewline }
+
+# Pausa hasta que el usuario presione Enter.
+function msg_pause {
+    Write-Host ""
+    Read-Host "  Presiona Enter para continuar..."
+}
