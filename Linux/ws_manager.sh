@@ -25,7 +25,7 @@ _usage() {
     echo "  Uso: $0 [OPCIONES]"
     echo ""
     echo "  Opciones:"
-    echo "    -d, --debug     Activa trazado de ejecucion (set -x)"
+    echo "    -d, --debug     Activa trazado de ejecución (set -x)"
     echo "    -v, --verify    Verifica dependencias y sale"
     echo "    -h, --help      Muestra esta ayuda"
     echo ""
@@ -50,16 +50,11 @@ done
 # Carga de librerías
 # -----------------------------------------------------------------------------
 
-# lib/ — reutilizables, independientes del tema web
 source "${SCRIPT_DIR}/lib/ui.sh"
 source "${SCRIPT_DIR}/lib/net.sh"
 
-# Funciones de utils.sh original integradas en lib/
-# check_service_active, check_service_enabled, check_package_installed, etc.
-# Si existe el archivo lo cargamos; si las funciones ya vienen de lib/ no hace falta
 [[ -f "${SCRIPT_DIR}/lib/utils.sh" ]] && source "${SCRIPT_DIR}/lib/utils.sh"
 
-# ws_lib/ — específicos del servicio web
 source "${SCRIPT_DIR}/ws_lib/ws_utils.sh"
 source "${SCRIPT_DIR}/ws_lib/ws_validators.sh"
 source "${SCRIPT_DIR}/ws_lib/ws_status.sh"
@@ -96,6 +91,24 @@ if ! http_verificar_dependencias &>/dev/null; then
 fi
 
 # -----------------------------------------------------------------------------
+# Función de invocación al gestor SSL
+# -----------------------------------------------------------------------------
+
+_ws_ssl_invoke() {
+    local ssl_mgr="${SCRIPT_DIR}/ssl_manager.sh"
+
+    if [[ ! -f "$ssl_mgr" ]]; then
+        msg_error "ssl_manager.sh no encontrado en: ${ssl_mgr}"
+        msg_info  "Copie ssl_manager.sh en el mismo directorio que ws_manager.sh"
+        echo ""
+        read -rp "  Presiona Enter para continuar..."
+        return 1
+    fi
+
+    bash "$ssl_mgr"
+}
+
+# -----------------------------------------------------------------------------
 # Menú principal
 # -----------------------------------------------------------------------------
 
@@ -109,7 +122,8 @@ main_menu() {
         echo -e "  ${BLUE}3)${NC} Configurar / Seguridad"
         echo -e "  ${BLUE}4)${NC} Monitoreo"
         echo -e "  ${BLUE}5)${NC} Verificar dependencias del sistema"
-        echo -e "  ${BLUE}6)${NC} Salir"
+        echo -e "  ${BLUE}6)${NC} SSL/TLS — Gestionar certificados y HTTPS"
+        echo -e "  ${BLUE}7)${NC} Salir"
         echo ""
         [[ "$DEBUG" == true ]] && echo -e "  ${YELLOW}[DEBUG ACTIVO]${NC}"
         echo ""
@@ -129,7 +143,8 @@ main_menu() {
                 echo ""
                 msg_pause
                 ;;
-            6)
+            6) _ws_ssl_invoke ;;
+            7)
                 echo ""
                 msg_info "Hasta luego."
                 echo ""

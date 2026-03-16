@@ -7,8 +7,6 @@
 
 #
 # _http_seleccionar_servicio_instalado  (interna)
-# Muestra solo los servicios que están actualmente instalados.
-# Retorna el nombre interno en la variable $1 o 1 si ninguno está instalado.
 #
 _http_seleccionar_servicio_instalado() {
     local _var_destino="$1"
@@ -73,8 +71,6 @@ _http_seleccionar_servicio_instalado() {
 
 #
 # _http_leer_puerto_config  (interna)
-# Lee el puerto del archivo de configuración sin depender de que el servicio
-# esté corriendo. Devuelve el número o cadena vacía.
 #
 _http_leer_puerto_config() {
     local servicio="$1"
@@ -91,6 +87,15 @@ _http_leer_puerto_config() {
         nginx)
             puerto=$(sudo grep -E "^\s+listen\s+[0-9]+" "$archivo_conf" 2>/dev/null \
                      | grep -oP '\d+' | head -1)
+            # Si ssl_manager comentó el listen, leer desde http-redirect.conf
+            if [[ -z "$puerto" ]] && \
+               sudo grep -q "# ssl_manager: HTTP desactivado" "$archivo_conf" 2>/dev/null; then
+                local redirect_conf="/etc/nginx/conf.d/http-redirect.conf"
+                if [[ -f "$redirect_conf" ]]; then
+                    puerto=$(sudo grep -E "^\s+listen\s+[0-9]+" "$redirect_conf" 2>/dev/null \
+                             | grep -oP '\d+' | head -1)
+                fi
+            fi
             ;;
         tomcat)
             puerto=$(sudo grep -oP 'Connector port="\K[0-9]+(?=" protocol="HTTP)' \
@@ -102,7 +107,6 @@ _http_leer_puerto_config() {
 
 #
 # _http_actualizar_firewall_puerto  (interna)
-# Abre el puerto nuevo y cierra el viejo si ya no lo usa nadie.
 #
 _http_actualizar_firewall_puerto() {
     local puerto_nuevo="$1"
@@ -111,7 +115,6 @@ _http_actualizar_firewall_puerto() {
     msg_info "Actualizando reglas de firewall..."
     echo ""
 
-    # Abrir el puerto nuevo
     if ! sudo firewall-cmd --list-ports 2>/dev/null \
          | grep -q "${puerto_nuevo}/tcp"; then
         if sudo firewall-cmd --permanent \
@@ -125,7 +128,6 @@ _http_actualizar_firewall_puerto() {
         msg_info "Puerto ${puerto_nuevo}/tcp ya estaba abierto"
     fi
 
-    # Cerrar el puerto viejo solo si no lo usa nadie más
     if ! http_puerto_en_uso "$puerto_viejo"; then
         if (( puerto_viejo == 80 )); then
             sudo firewall-cmd --permanent --remove-service=http \
@@ -150,25 +152,39 @@ _http_actualizar_firewall_puerto() {
 }
 
 #
+# _http_ssl_activo_para  (interna)
+# Retorna 0 si SSL está activo para el servicio dado.
+# No depende de ssl_lib — solo lee archivos y puertos.
+#
+_http_ssl_activo_para() {
+    local servicio="$1"
+    case "$servicio" in
+        httpd)
+            [[ -f "/etc/httpd/conf.d/ssl-reprobados.conf" ]]
+            ;;
+        nginx)
+            [[ -f "/etc/nginx/conf.d/ssl-reprobados.conf" ]]
+            ;;
+        tomcat)
+            local catalina="${CATALINA_HOME:-/usr/share/tomcat}"
+            grep -q 'SSLEnabled="true"' "${catalina}/conf/server.xml" 2>/dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+#
 # http_cambiar_puerto
 #
-# Edge case completo de cambio de puerto con rollback automático.
-# Secuencia:
-#   1. Seleccionar servicio instalado
-#   2. Detectar puerto actual desde el archivo de config
-#   3. Solicitar nuevo puerto (http_validar_puerto_cambio)
-#   4. Backup del archivo de config
-#   5. Editar el archivo (reutiliza _http_configurar_puerto_inicial del Grupo B)
-#   6. Restart del servicio (restart — el socket debe re-abrirse)
-#   7. Verificar respuesta HTTP en el nuevo puerto (curl -I)
-#   8. Si falla → restaurar backup + restart
-#   9. Si pasa → actualizar firewall + index.html
+# Cuando SSL está activo, pide AMBOS puertos (HTTP y HTTPS) y llama
+# a ssl_*_actualizar_puertos para reescribir la config SSL completa.
 #
 http_cambiar_puerto() {
     clear
     draw_header "Cambiar Puerto de Servicio HTTP"
 
-    # Paso 1: Servicio instalado
     local servicio
     if ! _http_seleccionar_servicio_instalado servicio; then
         return 1
@@ -176,45 +192,90 @@ http_cambiar_puerto() {
 
     http_draw_servicio_header "$servicio" "Cambio de Puerto"
 
-    # Paso 2: Puerto actual desde el archivo de config
-    local puerto_actual
-    puerto_actual=$(_http_leer_puerto_config "$servicio")
+    local ssl_activo=false
+    _http_ssl_activo_para "$servicio" && ssl_activo=true
 
-    if [[ -z "$puerto_actual" ]]; then
-        msg_alert "No se pudo detectar el puerto actual automaticamente"
+    # ── Leer puertos actuales ─────────────────────────────────────────────
+    local puerto_http_actual
+    puerto_http_actual=$(_http_leer_puerto_config "$servicio")
+    [[ -z "$puerto_http_actual" ]] && {
         case "$servicio" in
-            httpd)  puerto_actual="$HTTP_PUERTO_DEFAULT_APACHE" ;;
-            nginx)  puerto_actual="$HTTP_PUERTO_DEFAULT_NGINX"  ;;
-            tomcat) puerto_actual="$HTTP_PUERTO_DEFAULT_TOMCAT" ;;
+            httpd)  puerto_http_actual="$HTTP_PUERTO_DEFAULT_APACHE" ;;
+            nginx)  puerto_http_actual="$HTTP_PUERTO_DEFAULT_NGINX"  ;;
+            tomcat) puerto_http_actual="$HTTP_PUERTO_DEFAULT_TOMCAT" ;;
         esac
-        msg_info "Usando puerto por defecto: ${puerto_actual}"
-    else
-        msg_info "Puerto actual configurado: ${puerto_actual}/tcp"
+    }
+
+    local puerto_https_actual=""
+    if $ssl_activo; then
+        case "$servicio" in
+            httpd)
+                puerto_https_actual=$(sudo grep -oP "^Listen\s+\K[0-9]+"                     /etc/httpd/conf.d/ssl-reprobados.conf 2>/dev/null | head -1)
+                ;;
+            nginx)
+                puerto_https_actual=$(sudo grep -A3 "ssl_manager: SSL block"                     /etc/nginx/nginx.conf 2>/dev/null                     | grep -oP "listen\s+\K[0-9]+" | head -1)
+                ;;
+            tomcat)
+                puerto_https_actual=$(sudo grep -A5 "ssl_manager: HTTPS Connector"                     "${CATALINA_HOME:-/usr/share/tomcat}/conf/server.xml" 2>/dev/null                     | grep -oP 'port="\K[0-9]+' | head -1)
+                ;;
+        esac
     fi
 
+    echo ""
+    msg_info "Puertos actuales:"
+    printf "    HTTP  : %s/tcp
+" "$puerto_http_actual"
+    $ssl_activo && printf "    HTTPS : %s/tcp
+" "${puerto_https_actual:-desconocido}"
     echo ""
     http_listar_puertos_activos
     echo ""
 
-    # Paso 3: Nuevo puerto
-    local puerto_nuevo
+    # ── Pedir nuevo puerto HTTP ───────────────────────────────────────────
+    local puerto_http_nuevo
     while true; do
-        input_read "Nuevo puerto [actual: ${puerto_actual}]" puerto_nuevo
-        if [[ -z "$puerto_nuevo" ]]; then
-            msg_error "Debe ingresar un numero de puerto"
-            echo ""
-            continue
-        fi
-        if http_validar_puerto_cambio "$puerto_nuevo" "$puerto_actual"; then
-            break
-        fi
+        input_read "Nuevo puerto HTTP [actual: ${puerto_http_actual}]" puerto_http_nuevo
+        [[ -z "$puerto_http_nuevo" ]] && {
+            msg_error "Debe ingresar un número de puerto"; echo ""; continue; }
+        http_validar_puerto_cambio "$puerto_http_nuevo" "$puerto_http_actual" && break
         echo ""
     done
 
+    # ── Pedir nuevo puerto HTTPS si SSL está activo ───────────────────────
+    local puerto_https_nuevo=""
+    if $ssl_activo; then
+        echo ""
+        msg_info "SSL activo — también debes cambiar el puerto HTTPS."
+        while true; do
+            input_read "Nuevo puerto HTTPS [actual: ${puerto_https_actual:-443}]" puerto_https_nuevo
+            [[ -z "$puerto_https_nuevo" ]] && {
+                msg_error "Debe ingresar un número de puerto"; echo ""; continue; }
+            # No puede ser igual al puerto HTTP nuevo
+            if [[ "$puerto_https_nuevo" == "$puerto_http_nuevo" ]]; then
+                msg_error "El puerto HTTPS no puede ser igual al HTTP (${puerto_http_nuevo})"
+                echo ""; continue
+            fi
+            # No puede ser igual al puerto HTTPS actual (no hay cambio)
+            if [[ -n "${puerto_https_actual:-}" && "$puerto_https_nuevo" == "$puerto_https_actual" ]]; then
+                msg_error "El puerto HTTPS nuevo es igual al actual (${puerto_https_actual}) — ingresa un puerto diferente"
+                echo ""; continue
+            fi
+            # No puede ser igual al puerto HTTP actual
+            if [[ "$puerto_https_nuevo" == "$puerto_http_actual" ]]; then
+                msg_error "El puerto HTTPS no puede ser igual al HTTP actual (${puerto_http_actual})"
+                echo ""; continue
+            fi
+            http_validar_puerto_cambio "$puerto_https_nuevo" "${puerto_https_actual:-443}" && break
+            echo ""
+        done
+    fi
+
     echo ""
-    msg_alert "Se modificara la configuracion de ${servicio}:"
-    echo "    Puerto actual : ${puerto_actual}/tcp"
-    echo "    Puerto nuevo  : ${puerto_nuevo}/tcp"
+    msg_alert "Cambios a aplicar en ${servicio}:"
+    printf "    HTTP  : %s → %s/tcp
+" "$puerto_http_actual" "$puerto_http_nuevo"
+    $ssl_activo && printf "    HTTPS : %s → %s/tcp
+"         "${puerto_https_actual:-?}" "$puerto_https_nuevo"
     echo ""
 
     local confirmacion
@@ -230,65 +291,105 @@ http_cambiar_puerto() {
     separator
     echo ""
 
-    # Paso 4: Backup
     local archivo_conf
     archivo_conf=$(http_get_conf_archivo "$servicio")
 
-    msg_info "PASO 1/5 — Backup de configuracion"
-    if ! http_crear_backup "$archivo_conf"; then
-        msg_error "No se pudo crear backup — operacion cancelada por seguridad"
-        return 1
+    # ── PASO 1: Cambiar puerto HTTP en la config principal ────────────────
+    msg_info "PASO 1/4 — Actualizar puerto HTTP en ${archivo_conf}"
+    http_crear_backup "$archivo_conf" || {
+        msg_error "No se pudo crear backup"; return 1; }
+    _http_configurar_puerto_inicial "$servicio" "$puerto_http_nuevo"
+    echo ""
+
+    # ── PASO 2: Si SSL activo, reescribir config SSL con ambos puertos ────
+    if $ssl_activo; then
+        msg_info "PASO 2/4 — Actualizar configuración SSL"
+        local _ssl_lib
+        _ssl_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/ssl_lib/ssl.sh"
+        [[ ! -f "$_ssl_lib" ]] &&             _ssl_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../ssl_lib/ssl.sh"
+
+        if [[ -f "$_ssl_lib" ]] && source "$_ssl_lib" 2>/dev/null; then
+            case "$servicio" in
+                httpd) ssl_apache_actualizar_puertos "$puerto_http_nuevo" "$puerto_https_nuevo" ;;
+                nginx) ssl_nginx_actualizar_puertos  "$puerto_http_nuevo" "$puerto_https_nuevo" ;;
+                tomcat) ssl_tomcat_actualizar_puertos "$puerto_https_nuevo" ;;
+            esac || {
+                msg_error "Error al actualizar SSL — restaurando"
+                http_restaurar_backup "$archivo_conf"
+                return 1
+            }
+        else
+            msg_error "ssl_lib no disponible — rollback"
+            http_restaurar_backup "$archivo_conf"
+            return 1
+        fi
+        echo ""
     fi
-    echo ""
 
-    # Paso 5: Editar archivo (reutiliza función del Grupo B)
-    msg_info "PASO 2/5 — Aplicando nuevo puerto en ${archivo_conf}"
-    _http_configurar_puerto_inicial "$servicio" "$puerto_nuevo"
-    echo ""
-
-    # Paso 6: Restart (no reload — el socket cambia de puerto)
-    msg_info "PASO 3/5 — Reiniciando servicio para aplicar nuevo puerto"
+    # ── PASO 3: Reiniciar ─────────────────────────────────────────────────
+    msg_info "PASO 3/4 — Reiniciar servicio"
     if ! http_reiniciar_servicio "$servicio"; then
-        msg_error "El servicio no levanto — restaurando configuracion anterior"
+        msg_error "El servicio no levanto — restaurando"
         http_restaurar_backup "$archivo_conf"
         http_reiniciar_servicio "$servicio"
         return 1
     fi
     echo ""
 
-    # Paso 7: Verificar respuesta en el nuevo puerto
-    msg_info "PASO 4/5 — Verificando respuesta HTTP en puerto ${puerto_nuevo}"
+    # ── PASO 4: Verificar ─────────────────────────────────────────────────
+    msg_info "PASO 4/4 — Verificar respuesta en puerto ${puerto_http_nuevo}"
     sleep 2
 
-    if ! http_verificar_respuesta "$servicio" "$puerto_nuevo"; then
-        msg_error "Sin respuesta en puerto ${puerto_nuevo} — restaurando"
+    local _verify_ok=false
+    if $ssl_activo; then
+        local _code
+        _code=$(curl -s -o /dev/null -w "%{http_code}" \
+                --connect-timeout 5 --max-redirs 0 \
+                "http://localhost:${puerto_http_nuevo}" 2>/dev/null)
+        [[ "$_code" =~ ^(200|301|302)$ ]] && {
+            msg_success "Puerto ${puerto_http_nuevo} responde (HTTP ${_code})"
+            _verify_ok=true
+        }
+    else
+        http_verificar_respuesta "$servicio" "$puerto_http_nuevo" && _verify_ok=true
+    fi
+
+    if ! $_verify_ok; then
+        msg_error "Sin respuesta en puerto ${puerto_http_nuevo} — restaurando"
         http_restaurar_backup "$archivo_conf"
         http_reiniciar_servicio "$servicio"
-        msg_info "Configuracion restaurada al puerto ${puerto_actual}"
         return 1
     fi
     echo ""
 
-    # Paso 8: Firewall
+    # Actualizar firewall para el puerto HTTP (el HTTPS ya lo maneja ssl_*_actualizar_puertos)
     msg_info "PASO 5/5 — Actualizando reglas de firewall"
-    _http_actualizar_firewall_puerto "$puerto_nuevo" "$puerto_actual"
+    _http_actualizar_firewall_puerto "$puerto_http_nuevo" "$puerto_http_actual"
     echo ""
 
-    # Paso 9: Actualizar index.html
-    local version_actual
-    version_actual=$(rpm -q --queryformat "%{VERSION}-%{RELEASE}" \
-                     "$(http_nombre_paquete "$servicio")" 2>/dev/null)
-    http_crear_index "$servicio" "$version_actual" "$puerto_nuevo"
+    # Actualizar index.html con los puertos correctos
+    local _version
+    _version=$(rpm -q --queryformat "%{VERSION}-%{RELEASE}" \
+               "$(http_nombre_paquete "$servicio")" 2>/dev/null)
+    if $ssl_activo && [[ -n "$puerto_https_nuevo" ]]; then
+        http_crear_index "$servicio" "$_version" "$puerto_http_nuevo" "$puerto_https_nuevo"
+    else
+        http_crear_index "$servicio" "$_version" "$puerto_http_nuevo"
+    fi
 
     echo ""
     separator
-    msg_success "Puerto cambiado exitosamente: ${puerto_actual} → ${puerto_nuevo}"
+    if $ssl_activo; then
+        msg_success "Puertos cambiados — HTTP: ${puerto_http_actual} → ${puerto_http_nuevo} | HTTPS: ${puerto_https_actual} → ${puerto_https_nuevo}"
+    else
+        msg_success "Puerto cambiado exitosamente: ${puerto_http_actual} → ${puerto_http_nuevo}"
+    fi
     separator
 }
 
 #
 # _http_seguridad_apache  (interna)
-# Escribe security.conf completo con ServerTokens, ServerSignature y headers.
+# Escribe security.conf preservando el bloque HSTS si SSL está activo.
 #
 _http_seguridad_apache() {
     msg_info "Aplicando security headers en Apache..."
@@ -297,35 +398,40 @@ _http_seguridad_apache() {
     http_crear_backup "$HTTP_CONF_APACHE_SECURITY"
     echo ""
 
-    sudo tee "$HTTP_CONF_APACHE_SECURITY" > /dev/null << 'APACHEEOF'
-# security.conf — Generado por http_functions_C.sh
+    # Si SSL está activo, HSTS ya está en ssl-reprobados.conf.
+    # Lo incluimos igualmente en security.conf para que funcione
+    # también en el VirtualHost HTTP (aunque redirija, algunos proxies
+    # pueden necesitarlo). Si no hay SSL, el bloque HSTS no causa daño
+    # porque solo aplica sobre conexiones que ya son HTTPS.
+    local hsts_block=""
+    if _http_ssl_activo_para "httpd"; then
+        hsts_block='    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"'
+        msg_info "SSL activo — HSTS preservado en security.conf"
+    fi
+
+    sudo tee "$HTTP_CONF_APACHE_SECURITY" > /dev/null << APACHEEOF
+# security.conf — Generado por ws_config.sh
+# $(date '+%Y-%m-%d %H:%M:%S')
 
 # Ocultar version del servidor en headers HTTP
 ServerTokens Prod
 ServerSignature Off
 
-# Deshabilitar TRACE a nivel de servidor — previene Cross-Site Tracing (XST)
-# LimitExcept NO bloquea TRACE porque Apache lo procesa antes de evaluar Directory
-# TraceEnable es la unica directiva que opera a nivel mod_core
+# Deshabilitar TRACE
 TraceEnable Off
 
-# Activar mod_headers si no esta cargado
-# (requerido para las directivas Header always set)
 <IfModule !mod_headers.c>
     LoadModule headers_module modules/mod_headers.so
 </IfModule>
 
-# Security Headers — aplicados a todas las respuestas
 <IfModule mod_headers.c>
     Header always set X-Frame-Options "SAMEORIGIN"
     Header always set X-Content-Type-Options "nosniff"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
     Header always set X-XSS-Protection "1; mode=block"
+${hsts_block}
 </IfModule>
 
-# Control de metodos HTTP
-# <LimitExcept> requiere contexto Directory/Location — se aplica al webroot
-# http_restringir_metodos() sobreescribe este bloque con la seleccion del usuario
 <Directory "/var/www/html">
     <LimitExcept GET POST HEAD>
         Require all denied
@@ -333,16 +439,17 @@ TraceEnable Off
 </Directory>
 APACHEEOF
 
-
     if [[ $? -eq 0 ]]; then
         msg_success "security.conf escrito"
         echo "    ServerTokens          -> Prod"
         echo "    ServerSignature       -> Off"
-        echo "    TraceEnable           -> Off (anti-XST)"
+        echo "    TraceEnable           -> Off"
         echo "    X-Frame-Options       -> SAMEORIGIN"
         echo "    X-Content-Type-Options-> nosniff"
         echo "    Referrer-Policy       -> strict-origin-when-cross-origin"
         echo "    X-XSS-Protection      -> 1; mode=block"
+        [[ -n "$hsts_block" ]] && \
+            echo "    HSTS                  -> max-age=31536000 (SSL activo)"
         return 0
     else
         msg_error "No se pudo escribir security.conf"
@@ -352,7 +459,6 @@ APACHEEOF
 
 #
 # _http_seguridad_nginx  (interna)
-# server_tokens off + add_header en bloque http {} de nginx.conf.
 #
 _http_seguridad_nginx() {
     msg_info "Aplicando security headers en Nginx..."
@@ -361,7 +467,6 @@ _http_seguridad_nginx() {
     http_crear_backup "$HTTP_CONF_NGINX"
     echo ""
 
-    # server_tokens off
     if sudo grep -q "server_tokens" "$HTTP_CONF_NGINX" 2>/dev/null; then
         sudo sed -i "s/server_tokens.*/server_tokens off;/" "$HTTP_CONF_NGINX"
         msg_success "server_tokens off: actualizado"
@@ -370,17 +475,26 @@ _http_seguridad_nginx() {
         msg_success "server_tokens off: agregado"
     fi
 
-    # Función local para insertar/actualizar un add_header en nginx.conf
     _nginx_set_header() {
         local nombre="$1"
         local valor="$2"
         local directiva="    add_header ${nombre} \"${valor}\" always;"
+
+        # Buscar en nginx.conf principal (bloque http {})
         if sudo grep -q "add_header ${nombre}" "$HTTP_CONF_NGINX" 2>/dev/null; then
             sudo sed -i "s|add_header ${nombre}.*|${directiva}|" "$HTTP_CONF_NGINX"
-            msg_success "${nombre}: actualizado"
+            msg_success "${nombre}: actualizado en nginx.conf"
         else
             sudo sed -i "/server_tokens off;/a\\${directiva}" "$HTTP_CONF_NGINX"
-            msg_success "${nombre}: agregado"
+            msg_success "${nombre}: agregado en nginx.conf"
+        fi
+
+        # Si SSL activo, actualizar también en ssl-reprobados.conf
+        local ssl_conf="/etc/nginx/conf.d/ssl-reprobados.conf"
+        if [[ -f "$ssl_conf" ]]; then
+            if sudo grep -q "add_header ${nombre}" "$ssl_conf" 2>/dev/null; then
+                sudo sed -i "s|add_header ${nombre}.*|    ${directiva}|" "$ssl_conf"
+            fi
         fi
     }
 
@@ -403,7 +517,6 @@ _http_seguridad_nginx() {
 
 #
 # _http_seguridad_tomcat  (interna)
-# HttpHeaderSecurityFilter en web.xml para X-Frame-Options, nosniff, XSS.
 #
 _http_seguridad_tomcat() {
     msg_info "Aplicando security headers en Tomcat..."
@@ -420,7 +533,6 @@ _http_seguridad_tomcat() {
     http_crear_backup "$webxml"
     echo ""
 
-    # Eliminar filtro anterior si ya existe
     sudo sed -i '/<!-- HTTP Security Headers Filter -->/,/<\/filter>/d' \
              "$webxml" 2>/dev/null
     sudo sed -i '/<!-- HTTP Security Headers Filter mapping -->/,/<\/filter-mapping>/d' \
@@ -435,7 +547,6 @@ _http_seguridad_tomcat() {
         return 1
     fi
 
-    # Insertar el filtro antes de </web-app>
     sudo sed -i "${linea_cierre}i\\
 \\
   <!-- HTTP Security Headers Filter -->\\
@@ -446,6 +557,8 @@ _http_seguridad_tomcat() {
     <init-param><param-name>antiClickJackingOption</param-name><param-value>SAMEORIGIN</param-value></init-param>\\
     <init-param><param-name>blockContentTypeSniffingEnabled</param-name><param-value>true</param-value></init-param>\\
     <init-param><param-name>xssProtectionEnabled</param-name><param-value>true</param-value></init-param>\\
+    <init-param><param-name>hstsEnabled</param-name><param-value>true</param-value></init-param>\\
+    <init-param><param-name>hstsMaxAgeSeconds</param-name><param-value>31536000</param-value></init-param>\\
   </filter>\\
   <!-- HTTP Security Headers Filter mapping -->\\
   <filter-mapping>\\
@@ -458,12 +571,12 @@ _http_seguridad_tomcat() {
     echo "    X-Frame-Options        -> SAMEORIGIN"
     echo "    X-Content-Type-Options -> nosniff"
     echo "    X-XSS-Protection       -> activado"
+    echo "    HSTS                   -> max-age=31536000 (si HTTPS activo)"
     return 0
 }
 
 #
 # http_configurar_seguridad
-# Orquesta la aplicación de security headers para el servicio seleccionado.
 #
 http_configurar_seguridad() {
     clear
@@ -479,6 +592,12 @@ http_configurar_seguridad() {
 
     http_draw_servicio_header "$servicio" "Security Headers"
 
+    # Advertir si SSL está activo — HSTS se preservará
+    if _http_ssl_activo_para "$servicio"; then
+        msg_info "SSL activo — el header HSTS se incluirá en security.conf"
+        echo ""
+    fi
+
     local resultado=0
     case "$servicio" in
         httpd)  _http_seguridad_apache || resultado=1 ;;
@@ -493,16 +612,21 @@ http_configurar_seguridad() {
     http_recargar_servicio "$servicio"
     echo ""
 
-    # Verificar headers reales con curl
+    # Verificar headers — usar HTTPS si SSL está activo
     local puerto_activo
     puerto_activo=$(_http_obtener_puerto_activo "$(http_nombre_systemd "$servicio")")
 
     if [[ -n "$puerto_activo" ]]; then
-        msg_info "Headers presentes en respuesta HTTP real:"
+        local proto="http"
+        local curl_opts="-I --max-time 5 --silent"
+        if _http_ssl_activo_para "$servicio"; then
+            proto="https"
+            curl_opts="-Ik --max-time 5 --silent"
+        fi
+        msg_info "Headers presentes en respuesta ${proto^^} real:"
         echo ""
-        curl -I --max-time 5 --silent "http://localhost:${puerto_activo}" \
-             2>/dev/null \
-        | grep -E "^(Server|X-Frame|X-Content|X-XSS|Referrer)" \
+        curl $curl_opts "${proto}://localhost:${puerto_activo}" 2>/dev/null \
+        | grep -E "^(Server|X-Frame|X-Content|X-XSS|Referrer|Strict)" \
         | sed 's/^/    /'
     fi
 
@@ -513,7 +637,6 @@ http_configurar_seguridad() {
 
 #
 # _http_metodos_apache  (interna)
-# LimitExcept en security.conf — permite los métodos listados, bloquea el resto.
 #
 _http_metodos_apache() {
     local metodos_permitidos="$1"
@@ -523,11 +646,9 @@ _http_metodos_apache() {
 
     http_crear_backup "$HTTP_CONF_APACHE_SECURITY"
 
-    # Eliminar bloque Directory+LimitExcept anterior completo
     sudo sed -i '/<Directory "\/var\/www\/html">/,/<\/Directory>/d' \
              "$HTTP_CONF_APACHE_SECURITY" 2>/dev/null
 
-    # Agregar bloque actualizado — LimitExcept DEBE estar dentro de Directory
     sudo tee -a "$HTTP_CONF_APACHE_SECURITY" > /dev/null << EOF
 
 # Control de metodos HTTP
@@ -542,10 +663,8 @@ EOF
     return 0
 }
 
-
 #
 # _http_metodos_nginx  (interna)
-# Bloque if ($request_method) en nginx.conf — devuelve 405 para bloqueados.
 #
 _http_metodos_nginx() {
     local metodos_bloqueados="$1"
@@ -555,13 +674,21 @@ _http_metodos_nginx() {
 
     http_crear_backup "$HTTP_CONF_NGINX"
 
-    # Eliminar bloque anterior si existe
     sudo sed -i '/# Control de metodos HTTP/,/^        }$/d' \
              "$HTTP_CONF_NGINX" 2>/dev/null
 
-    # Insertar antes del primer bloque location
     sudo sed -i "/location \//i\\        # Control de metodos HTTP\\n        if (\$request_method ~ ^(${metodos_bloqueados})\$) {\\n            return 405;\\n        }" \
              "$HTTP_CONF_NGINX" 2>/dev/null
+
+    # Si SSL activo, aplicar también en ssl-reprobados.conf
+    local ssl_conf="/etc/nginx/conf.d/ssl-reprobados.conf"
+    if [[ -f "$ssl_conf" ]]; then
+        http_crear_backup "$ssl_conf"
+        sudo sed -i '/# Control de metodos HTTP/,/^        }$/d' "$ssl_conf" 2>/dev/null
+        sudo sed -i "/location \//i\\        # Control de metodos HTTP\\n        if (\$request_method ~ ^(${metodos_bloqueados})\$) {\\n            return 405;\\n        }" \
+                 "$ssl_conf" 2>/dev/null
+        msg_success "Metodos bloqueados aplicados tambien en ssl-reprobados.conf"
+    fi
 
     if sudo nginx -t 2>/dev/null; then
         msg_success "Metodos bloqueados en Nginx: ${metodos_bloqueados}"
@@ -575,7 +702,6 @@ _http_metodos_nginx() {
 
 #
 # _http_metodos_tomcat  (interna)
-# security-constraint en web.xml con http-method-omission.
 #
 _http_metodos_tomcat() {
     local metodos_bloqueados_str="$1"
@@ -596,7 +722,6 @@ _http_metodos_tomcat() {
     sudo sed -i '/<!-- HTTP Method Restriction -->/,/<\/security-constraint>/d' \
              "$webxml" 2>/dev/null
 
-    # Construir líneas de http-method-omission
     local metodos_xml=""
     local metodo
     for metodo in $metodos_bloqueados_str; do
@@ -629,7 +754,6 @@ $(printf "%b" "$metodos_xml")    </web-resource-collection>\\
 
 #
 # http_restringir_metodos
-# Menú con perfiles: Recomendado, Estricto, Personalizado.
 #
 http_restringir_metodos() {
     clear
@@ -755,7 +879,6 @@ http_restringir_metodos() {
 
 #
 # http_menu_configurar
-# Submenú del Grupo C. Opción 3 del menú principal.
 #
 http_menu_configurar() {
     while true; do
@@ -773,19 +896,15 @@ http_menu_configurar() {
         read -rp "  Opcion: " op
 
         case "$op" in
-            1) http_cambiar_puerto;      echo ""; msg_pause ;;
+            1) http_cambiar_puerto;       echo ""; msg_pause ;;
             2) http_configurar_seguridad; echo ""; msg_pause ;;
-            3) http_restringir_metodos;  echo ""; msg_pause ;;
+            3) http_restringir_metodos;   echo ""; msg_pause ;;
             4) http_menu_versiones ;;
             5) return 0 ;;
             *) msg_error "Opcion invalida. Seleccione entre 1 y 5"; sleep 2 ;;
         esac
     done
 }
-
-#
-#   EXPORTAR FUNCIONES DEL GRUPO C
-#
 
 export -f http_cambiar_puerto
 export -f http_configurar_seguridad
@@ -794,6 +913,7 @@ export -f http_menu_configurar
 export -f _http_seleccionar_servicio_instalado
 export -f _http_actualizar_firewall_puerto
 export -f _http_leer_puerto_config
+export -f _http_ssl_activo_para
 export -f _http_seguridad_apache
 export -f _http_seguridad_nginx
 export -f _http_seguridad_tomcat
