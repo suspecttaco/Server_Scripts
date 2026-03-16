@@ -44,6 +44,55 @@ instalar_vsftpd() {
         msg_error "vsftpd no inicio — revisa: journalctl -u vsftpd -n 30"
         return 1
     fi
+
+    # -------------------------------------------------------------------------
+    # Hook SSL/FTPS — se ejecuta al final de la instalación exitosa
+    # -------------------------------------------------------------------------
+    _ftp_ssl_hook
+}
+
+# -----------------------------------------------------------------------------
+# _ftp_ssl_hook
+#
+# Pregunta al usuario si desea activar FTPS inmediatamente después de instalar
+# vsftpd. No es fatal: si se rechaza o ssl_lib no está disponible, vsftpd
+# sigue funcionando en modo FTP plano.
+# -----------------------------------------------------------------------------
+_ftp_ssl_hook() {
+    local _ssl_lib="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/ssl_lib/ssl.sh"
+
+    echo ""
+    separator
+    msg_info "Configuracion FTPS (SSL/TLS)"
+    separator
+    echo ""
+    msg_input "¿Desea activar FTPS (SSL/TLS) en vsftpd ahora? [S/N]: "
+    read -r _resp_ftps
+
+    if [[ ! "${_resp_ftps^^}" =~ ^(S|SI|Y|YES)$ ]]; then
+        msg_info "FTPS omitido. Puede activarlo despues desde ftp_manager.sh → opcion 6"
+        return 0
+    fi
+
+    if [[ ! -f "$_ssl_lib" ]]; then
+        msg_error "ssl_lib/ssl.sh no encontrado en: ${_ssl_lib}"
+        msg_info  "Copie ssl_lib/ en el directorio raiz del proyecto para habilitar FTPS"
+        return 0
+    fi
+
+    # Cargar ws_lib/ws_utils.sh si no está en el entorno (ssl_lib lo requiere)
+    local _ws_utils="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/ws_lib/ws_utils.sh"
+    if ! declare -f http_get_webroot &>/dev/null && [[ -f "$_ws_utils" ]]; then
+        source "$_ws_utils" 2>/dev/null || true
+    fi
+
+    if source "$_ssl_lib" 2>/dev/null; then
+        ssl_configurar_vsftpd || msg_alert "FTPS no se completo correctamente — revise los logs"
+    else
+        msg_error "No se pudo cargar ssl_lib — FTPS omitido"
+    fi
+
+    return 0
 }
 
 _crear_grupos_sistema() {
@@ -57,7 +106,6 @@ _crear_grupos_sistema() {
     done
 }
 
-# Crea el grupo secundario usado para bloquear usuarios FTP en SSH via DenyGroups.
 _crear_grupo_ssh() {
     if ! getent group "$FTP_SSH_GROUP" &>/dev/null; then
         groupadd --system "$FTP_SSH_GROUP"
@@ -67,8 +115,6 @@ _crear_grupo_ssh() {
     fi
 }
 
-# Bloquea en SSH todos los miembros del grupo ftp_users via DenyGroups.
-# Se configura una sola vez — cada usuario nuevo se bloquea al agregarlo al grupo.
 _bloquear_ftp_en_ssh() {
     local sshd_conf="/etc/ssh/sshd_config"
     [ ! -f "$sshd_conf" ] && return 0
@@ -96,7 +142,7 @@ listen=YES
 listen_ipv6=NO
 
 # --- Anonimo: chroot en /srv/ftp/ftp_anonymous (root:root 755, no escribible)
-# con bind mount de /general dentro — vsftpd rechaza chroot escribible
+# con bind mount de general dentro — vsftpd rechaza chroot escribible
 anonymous_enable=YES
 anon_root=$FTP_ROOT/ftp_anonymous
 no_anon_password=YES
@@ -128,7 +174,6 @@ pasv_min_port=30000
 pasv_max_port=31000
 
 # --- Rendimiento y compatibilidad ---
-# Sin reverse DNS lookup: evita cuelgues al conectar desde red local
 reverse_lookup_enable=NO
 
 # --- PAM: autentica via /etc/shadow ---
@@ -151,9 +196,6 @@ PAM
     msg_success "PAM: autenticacion via /etc/shadow"
 }
 
-# Configura SELinux para permitir lectura/escritura FTP en $FTP_ROOT.
-# Sin esto, SELinux bloquea silenciosamente subidas, bajadas y listados
-# aunque los permisos Unix y ACLs sean correctos.
 _configurar_selinux() {
     if ! command -v semanage &>/dev/null; then
         msg_alert "semanage no disponible — omitiendo configuracion SELinux"
@@ -163,12 +205,10 @@ _configurar_selinux() {
 
     msg_process "Configurando SELinux para FTP..."
 
-    # Contexto rw para todo el arbol FTP
     semanage fcontext -a -t public_content_rw_t "${FTP_ROOT}(/.*)?" 2>/dev/null || \
     semanage fcontext -m -t public_content_rw_t "${FTP_ROOT}(/.*)?" 2>/dev/null
     restorecon -Rv "$FTP_ROOT" &>/dev/null
 
-    # Booleano: acceso completo de vsftpd al sistema de archivos local
     setsebool -P ftpd_full_access on &>/dev/null
 
     msg_success "SELinux configurado para FTP (public_content_rw_t + ftpd_full_access)"
@@ -192,13 +232,11 @@ desinstalar_vsftpd() {
     dnf remove -y vsftpd &>/dev/null
     msg_success "vsftpd desinstalado"
 
-    # Desmontar y eliminar todos los bind mounts de usuarios
     msg_process "Eliminando bind mounts FTP..."
     while IFS=: read -r u _; do
         [ -z "$u" ] && continue
         _eliminar_mounts_usuario "$u" 2>/dev/null || true
     done < "$VSFTPD_USERS_META" 2>/dev/null
-    # Desmontar chroot anonimo
     _eliminar_bind_mount "$FTP_ROOT/ftp_anonymous/general" 2>/dev/null || true
     rmdir "$FTP_ROOT/ftp_anonymous" 2>/dev/null || true
     find /etc/systemd/system/ -name "srv-ftp-*.mount" -delete 2>/dev/null
@@ -220,7 +258,6 @@ desinstalar_vsftpd() {
         msg_success "Datos eliminados"
     fi
 
-    # Quitar DenyGroups de sshd_config
     local sshd_conf="/etc/ssh/sshd_config"
     if [ -f "$sshd_conf" ]; then
         sed -i "/# Usuarios FTP/d;/DenyGroups ${FTP_SSH_GROUP}/d" "$sshd_conf"
@@ -228,7 +265,6 @@ desinstalar_vsftpd() {
         msg_success "SSH: DenyGroups removido"
     fi
 
-    # Revertir contexto SELinux
     if command -v semanage &>/dev/null; then
         semanage fcontext -d "${FTP_ROOT}(/.*)?" 2>/dev/null || true
         setsebool -P ftpd_full_access off &>/dev/null || true
