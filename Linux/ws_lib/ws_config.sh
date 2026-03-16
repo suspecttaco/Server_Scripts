@@ -163,11 +163,12 @@ _http_ssl_activo_para() {
             [[ -f "/etc/httpd/conf.d/ssl-reprobados.conf" ]]
             ;;
         nginx)
-            [[ -f "/etc/nginx/conf.d/ssl-reprobados.conf" ]]
+            # El bloque SSL está dentro de nginx.conf — buscar la marca
+            sudo grep -q "ssl_manager: SSL block" /etc/nginx/nginx.conf 2>/dev/null
             ;;
         tomcat)
             local catalina="${CATALINA_HOME:-/usr/share/tomcat}"
-            grep -q 'SSLEnabled="true"' "${catalina}/conf/server.xml" 2>/dev/null
+            sudo grep -q 'SSLEnabled="true"' "${catalina}/conf/server.xml" 2>/dev/null
             ;;
         *)
             return 1

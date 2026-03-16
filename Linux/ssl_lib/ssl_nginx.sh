@@ -4,11 +4,18 @@
 #
 # Estrategia: python3 modifica nginx.conf insertando el bloque HTTPS dentro
 # de http{} y agregando return 301 en el server block HTTP existente.
+#
+# Redirect: usa https://$host:PUERTO$request_uri donde $host es la variable
+# Nginx que refleja exactamente el header Host: del cliente — funciona
+# correctamente independientemente de cuántas interfaces tenga el servidor.
 # =============================================================================
 
 readonly _SSL_NGINX_CONF="/etc/nginx/nginx.conf"
 readonly _SSL_NGINX_MARCA="# === ssl_manager: SSL block ==="
 
+# -----------------------------------------------------------------------------
+# _ssl_nginx_leer_puerto_http  (interna)
+# -----------------------------------------------------------------------------
 _ssl_nginx_leer_puerto_http() {
     local puerto
     puerto=$(sudo grep -E "^\s+listen\s+[0-9]+;" "$_SSL_NGINX_CONF" 2>/dev/null \
@@ -16,14 +23,19 @@ _ssl_nginx_leer_puerto_http() {
     echo "${puerto:-80}"
 }
 
+# -----------------------------------------------------------------------------
+# _ssl_nginx_leer_puerto_https  (interna)
+# -----------------------------------------------------------------------------
 _ssl_nginx_leer_puerto_https() {
-    # Lee el puerto HTTPS del bloque SSL insertado por ssl_manager
     local puerto
-    puerto=$(sudo grep -A2 "$_SSL_NGINX_MARCA" "$_SSL_NGINX_CONF" 2>/dev/null \
+    puerto=$(sudo grep -A3 "$_SSL_NGINX_MARCA" "$_SSL_NGINX_CONF" 2>/dev/null \
              | grep -oP "listen\s+\K[0-9]+" | head -1)
     echo "${puerto:-443}"
 }
 
+# -----------------------------------------------------------------------------
+# _ssl_nginx_webroot  (interna)
+# -----------------------------------------------------------------------------
 _ssl_nginx_webroot() {
     local root
     root=$(sudo grep -E "^\s+root\s+" "$_SSL_NGINX_CONF" 2>/dev/null \
@@ -32,9 +44,18 @@ _ssl_nginx_webroot() {
 }
 
 # -----------------------------------------------------------------------------
+# _ssl_nginx_ssl_activo  (interna)
+# Verifica si el bloque SSL de ssl_manager está en nginx.conf.
+# Más fiable que buscar la marca desde ws_config.sh.
+# -----------------------------------------------------------------------------
+_ssl_nginx_ssl_activo() {
+    sudo grep -q "$_SSL_NGINX_MARCA" "$_SSL_NGINX_CONF" 2>/dev/null
+}
+
+# -----------------------------------------------------------------------------
 # _ssl_nginx_registrar_selinux  (interna)
 # Registra el puerto HTTPS en SELinux como http_port_t.
-# Sin esto Nginx no puede hacer bind() en puertos no estándar.
+# Sin esto Nginx falla con bind() Permission denied en puertos no estándar.
 # -----------------------------------------------------------------------------
 _ssl_nginx_registrar_selinux() {
     local puerto="$1"
@@ -42,23 +63,20 @@ _ssl_nginx_registrar_selinux() {
     command -v getenforce &>/dev/null || return 0
     [[ "$(getenforce 2>/dev/null)" == "Disabled" ]] && return 0
 
-    # Puertos ya registrados por defecto — no necesitan semanage
     local puertos_default=(80 443 8008 8009 8080 8443)
     local p
     for p in "${puertos_default[@]}"; do
         [[ "$puerto" == "$p" ]] && return 0
     done
 
-    # Verificar si ya está registrado
     if sudo semanage port -l 2>/dev/null \
        | grep -E "^http_port_t\s" | grep -qw "$puerto"; then
         msg_info "Puerto ${puerto} ya registrado en SELinux como http_port_t"
         return 0
     fi
 
-    # Instalar semanage si falta
     if ! command -v semanage &>/dev/null; then
-        msg_alert "Instalando policycoreutils-python-utils para semanage..."
+        msg_alert "Instalando policycoreutils-python-utils..."
         sudo dnf install -y policycoreutils-python-utils &>/dev/null || {
             msg_error "No se pudo instalar semanage — Nginx fallará en puerto ${puerto}"
             return 1
@@ -73,13 +91,18 @@ _ssl_nginx_registrar_selinux() {
     fi
 
     msg_error "No se pudo registrar puerto ${puerto} en SELinux"
-    msg_info "Intente: sudo semanage port -a -t http_port_t -p tcp ${puerto}"
     return 1
 }
 
 # -----------------------------------------------------------------------------
 # _ssl_nginx_aplicar_python  (interna)
-# Modifica nginx.conf via python3 — idempotente.
+#
+# Modifica nginx.conf via python3. Idempotente.
+#
+# El redirect usa https://$host:HTTPS_PORT$request_uri
+# $host es la variable Nginx que contiene el header Host: del cliente,
+# sin el puerto. Funciona correctamente con cualquier número de interfaces
+# de red — NAT, Host-Only, etc.
 # -----------------------------------------------------------------------------
 _ssl_nginx_aplicar_python() {
     local http_port="$1"
@@ -98,17 +121,10 @@ _ssl_nginx_aplicar_python() {
     sudo cp "$_SSL_NGINX_CONF" "$tmpconf"
     sudo chmod 644 "$tmpconf"
 
-    # Obtener IP del servidor para el redirect — no usar $server_name
-    # porque puede ser "_" (wildcard default de Nginx)
-    local _srv_ip
-    _srv_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-    [[ -z "$_srv_ip" ]] && _srv_ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
-    [[ -z "$_srv_ip" ]] && _srv_ip="localhost"
-
     python3 - "$tmpconf" \
               "$http_port" "$https_port" \
               "$cert_path" "$key_path" \
-              "$server_name" "$webroot" "$marca" "$_srv_ip" << 'PYEOF'
+              "$server_name" "$webroot" "$marca" << 'PYEOF'
 import sys, re
 
 conf_file   = sys.argv[1]
@@ -119,7 +135,6 @@ key_path    = sys.argv[5]
 server_name = sys.argv[6]
 webroot     = sys.argv[7]
 marca       = sys.argv[8]
-server_ip   = sys.argv[9]
 
 with open(conf_file) as f:
     content = f.read()
@@ -159,7 +174,9 @@ def remove_redirect_from_server(text, port):
 content = remove_redirect_from_server(content, http_port)
 
 # 3. Agregar return 301 en el server block HTTP existente
-redirect_line = f'        return 301 https://{server_ip}:{https_port}$request_uri;'
+# Usar $host (variable Nginx) — refleja el header Host: del cliente,
+# funciona con cualquier IP/interfaz sin hardcodear nada.
+redirect_line = f'        return 301 https://$host:{https_port}$request_uri;'
 
 def add_redirect_to_server(text, port, redirect):
     result = []
@@ -293,7 +310,6 @@ _ssl_nginx_abrir_firewall() {
 
 # -----------------------------------------------------------------------------
 # ssl_nginx_actualizar_puertos  (pública)
-# Reaplica SSL con nuevos puertos HTTP y HTTPS.
 # -----------------------------------------------------------------------------
 ssl_nginx_actualizar_puertos() {
     local http_port="$1"
@@ -431,6 +447,9 @@ ssl_configurar_nginx() {
     return 0
 }
 
+# -----------------------------------------------------------------------------
+# ssl_desactivar_nginx  (pública)
+# -----------------------------------------------------------------------------
 ssl_desactivar_nginx() {
     msg_alert "Desactivando SSL en Nginx..."
     local bak; bak=$(ls -t "${_SSL_NGINX_CONF}.bak_"* 2>/dev/null | head -1)
@@ -467,6 +486,7 @@ PYEOF
 export -f ssl_configurar_nginx
 export -f ssl_desactivar_nginx
 export -f ssl_nginx_actualizar_puertos
+export -f _ssl_nginx_ssl_activo
 export -f _ssl_nginx_leer_puerto_http
 export -f _ssl_nginx_leer_puerto_https
 export -f _ssl_nginx_webroot
