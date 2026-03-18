@@ -1,26 +1,30 @@
 #!/bin/bash
 # =============================================================================
-# ftp_repo_builder.sh — Construye el repositorio FTP de paquetes HTTP
+# ftp_repo_builder.sh — Construye el repositorio local de paquetes HTTP
 #
-# Descarga paquetes para Linux (Fedora/RPM) y Windows, genera hashes SHA256,
-# organiza la estructura y sube al servidor FTP vsftpd.
+# Descarga paquetes para Linux (RPM Fedora) y Windows, genera SHA256.
+# La carpeta resultante se sube manualmente al FTP via FileZilla.
 #
-# Estructura en el FTP (dentro del directorio personal del usuario FTP):
+# Estructura generada en ~/ftp_repo/ (o la ruta que elijas):
 #   http/
 #   ├── Linux/
-#   │   ├── Apache/   → httpd RPMs + .sha256
-#   │   ├── Nginx/    → nginx RPMs + .sha256
-#   │   └── Tomcat/   → tomcat RPMs + .sha256
+#   │   ├── Apache/   → httpd-*.rpm  + .sha256
+#   │   ├── Nginx/    → nginx-*.rpm  + .sha256
+#   │   └── Tomcat/   → tomcat*.rpm  + .sha256
 #   └── Windows/
-#       ├── Apache/   → ApacheLounge .zip + .sha256
-#       ├── Nginx/    → nginx .zip + .sha256
-#       └── Tomcat/   → Tomcat .exe + .sha256
+#       ├── Apache/   → httpd-*-win64-*.zip + .sha256  (ApacheLounge)
+#       ├── Nginx/    → nginx-*.zip + .sha256          (nginx.org)
+#       └── Tomcat/   → apache-tomcat-*.exe + .sha256  (apache.org)
 #
-# Uso: bash ftp_repo_builder.sh
-# Requiere: curl, wget, dnf (repoquery), sha256sum, python3
+# Uso:
+#   bash ftp_repo_builder.sh
+#   bash ftp_repo_builder.sh ~/mis_paquetes
+#
+# Requiere: curl, dnf, sha256sum
+# Plataforma: Fedora 43 Workstation (o cualquier Fedora con dnf)
 # =============================================================================
 
-set -euo pipefail
+set -uo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Colores
@@ -37,15 +41,14 @@ _input()   { echo -ne "${CYAN}→${NC} $1"; }
 _sep()     { echo -e "${CYAN}------------------------------------------------------------${NC}"; }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Directorio de trabajo temporal
+# Directorio de salida (permanente — se sube a mano con FileZilla)
 # ─────────────────────────────────────────────────────────────────────────────
-WORK_DIR=$(mktemp -d /tmp/ftp_repo_XXXXXX)
-trap 'echo ""; _info "Limpiando directorio temporal..."; rm -rf "$WORK_DIR"' EXIT
+WORK_DIR="${1:-${HOME}/ftp_repo}"
 
 # Estructura local
 LINUX_DIR="${WORK_DIR}/http/Linux"
 WIN_DIR="${WORK_DIR}/http/Windows"
-MAX_VERSIONS=10
+MAX_VERSIONS=5  # minimo 3 (latest, stable, anterior)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Verificar dependencias
@@ -65,64 +68,6 @@ _verificar_deps() {
         }
     fi
     _ok "Dependencias OK"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Pedir credenciales FTP
-# ─────────────────────────────────────────────────────────────────────────────
-_pedir_credenciales_ftp() {
-    _sep
-    echo -e "  ${CYAN}Credenciales del servidor FTP destino${NC}"
-    _sep
-    echo ""
-
-    _input "IP del servidor FTP: "; read -r FTP_HOST
-    [[ -z "$FTP_HOST" ]] && { _err "La IP no puede estar vacía"; exit 1; }
-
-    _input "Puerto FTP [21]: "; read -r FTP_PORT
-    FTP_PORT="${FTP_PORT:-21}"
-
-    _input "Usuario FTP: "; read -r FTP_USER
-    [[ -z "$FTP_USER" ]] && { _err "El usuario no puede estar vacío"; exit 1; }
-
-    _input "Contraseña: "; read -rs FTP_PASS; echo
-    [[ -z "$FTP_PASS" ]] && { _err "La contraseña no puede estar vacía"; exit 1; }
-
-    _input "Directorio destino en el FTP [/]: "; read -r FTP_DEST_DIR
-    FTP_DEST_DIR="${FTP_DEST_DIR:-/}"
-    # Normalizar: quitar trailing slash salvo que sea /
-    [[ "$FTP_DEST_DIR" != "/" ]] && FTP_DEST_DIR="${FTP_DEST_DIR%/}"
-
-    echo ""
-    _ok "Credenciales recibidas"
-    _info "  Host    : ${FTP_HOST}:${FTP_PORT}"
-    _info "  Usuario : ${FTP_USER}"
-    _info "  Destino : ${FTP_DEST_DIR}"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Verificar conectividad FTP
-# ─────────────────────────────────────────────────────────────────────────────
-_verificar_ftp() {
-    _proc "Verificando conexión FTP..."
-    if curl -s --connect-timeout 10 \
-            --ftp-ssl \
-            -u "${FTP_USER}:${FTP_PASS}" \
-            "ftp://${FTP_HOST}:${FTP_PORT}/" \
-            -l &>/dev/null; then
-        _ok "Conexión FTP establecida (FTPS)"
-        FTP_SSL="--ftp-ssl"
-    elif curl -s --connect-timeout 10 \
-            -u "${FTP_USER}:${FTP_PASS}" \
-            "ftp://${FTP_HOST}:${FTP_PORT}/" \
-            -l &>/dev/null; then
-        _ok "Conexión FTP establecida (FTP plano)"
-        FTP_SSL=""
-    else
-        _err "No se pudo conectar al FTP en ${FTP_HOST}:${FTP_PORT}"
-        _info "Verifique IP, puerto y credenciales"
-        exit 1
-    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,8 +138,8 @@ _verificar_hash_oficial() {
 # LINUX — Descargar RPMs via dnf download
 # ─────────────────────────────────────────────────────────────────────────────
 _descargar_linux_paquete() {
-    local paquete="$1"   # httpd | nginx | tomcat
-    local servicio="$2"  # Apache | Nginx | Tomcat  (nombre display)
+    local paquete="$1"
+    local servicio="$2"
     local destino="${LINUX_DIR}/${servicio}"
 
     mkdir -p "$destino"
@@ -202,22 +147,47 @@ _descargar_linux_paquete() {
     _info "Linux — ${servicio} (RPM)"
     _sep
 
-    # Obtener versiones disponibles vía repoquery
+    # dnf5 (Fedora 43) usa "list --showduplicates"
+    # dnf4 usa "repoquery --showduplicates"
     _proc "Consultando versiones en repositorio DNF..."
-    local versiones
-    versiones=$(dnf repoquery \
-                    --arch "$(uname -m)" \
-                    --showduplicates \
-                    --queryformat "%{version}-%{release}.%{arch}" \
-                    "$paquete" 2>/dev/null \
-                | grep -v "^$" | sort -Vr | uniq | head -"$MAX_VERSIONS")
+    local versiones=""
+
+    # Intentar dnf5 primero
+    versiones=$(dnf list --showduplicates "$paquete" 2>/dev/null \
+                | grep "^${paquete}\." \
+                | awk '{print $2}' \
+                | sort -Vr | uniq | head -"$MAX_VERSIONS")
+
+    # Fallback dnf4
+    if [[ -z "$versiones" ]]; then
+        versiones=$(dnf repoquery \
+                        --arch "$(uname -m)" \
+                        --showduplicates \
+                        --queryformat "%{version}-%{release}.%{arch}" \
+                        "$paquete" 2>/dev/null \
+                    | grep -v "^$" | sort -Vr | uniq | head -"$MAX_VERSIONS")
+    fi
+
+    # Si pocas versiones, consultar updates-testing
+    if [[ $(echo "$versiones" | grep -c .) -lt 2 ]]; then
+        _proc "Pocas versiones — consultando updates-testing..."
+        local versiones_extra=""
+        versiones_extra=$(dnf list --showduplicates \
+                            --enablerepo="updates-testing" \
+                            "$paquete" 2>/dev/null \
+                        | grep "^${paquete}\." \
+                        | awk '{print $2}' \
+                        | sort -Vr | uniq | head -"$MAX_VERSIONS")
+        versiones=$(printf '%s\n%s' "$versiones" "$versiones_extra" \
+                    | grep -v "^$" | sort -Vr | uniq | head -"$MAX_VERSIONS")
+    fi
 
     if [[ -z "$versiones" ]]; then
         _warn "No se encontraron versiones para '${paquete}' — omitiendo"
         return 0
     fi
 
-    local total; total=$(echo "$versiones" | wc -l)
+    local total; total=$(echo "$versiones" | grep -c .)
     _ok "Versiones encontradas: ${total}"
     echo "$versiones" | head -5 | sed 's/^/    /'
     [[ $total -gt 5 ]] && echo "    ..."
@@ -226,45 +196,30 @@ _descargar_linux_paquete() {
     local descargados=0
     while IFS= read -r ver; do
         [[ -z "$ver" ]] && continue
-        local pkg_ver="${paquete}-${ver}"
-        _proc "Descargando ${pkg_ver}..."
+        _proc "Descargando ${paquete}-${ver}..."
 
-        # dnf download descarga el RPM al directorio indicado
         if dnf download \
-                --arch "$(uname -m)" \
                 --destdir "$destino" \
-                "${pkg_ver}" &>/dev/null 2>&1; then
-
-            # Encontrar el RPM descargado (puede tener nombre ligeramente diferente)
+                "${paquete}-${ver}" &>/dev/null 2>&1; then
+            # Encontrar el RPM recién descargado
             local rpm_file
-            rpm_file=$(find "$destino" -name "${paquete}-${ver%.*}*.rpm" \
-                       -newer "${destino}/.timestamp" 2>/dev/null | head -1)
-            # Fallback: cualquier RPM nuevo
-            [[ -z "$rpm_file" ]] && \
-                rpm_file=$(find "$destino" -name "*.rpm" \
-                          -newer "${destino}/.timestamp_prev" 2>/dev/null | tail -1)
-
+            rpm_file=$(find "$destino" -name "*.rpm" -newer "$destino" \
+                       2>/dev/null | tail -1)
             if [[ -n "$rpm_file" ]]; then
                 _generar_sha256 "$rpm_file" > /dev/null
                 (( descargados++ ))
                 _ok "$(basename "$rpm_file")"
             fi
         else
-            _warn "No se pudo descargar ${pkg_ver}"
+            _warn "No se pudo descargar ${paquete}-${ver}"
         fi
-        # Actualizar timestamp para detectar archivos nuevos en próxima iteración
-        touch "${destino}/.timestamp"
+        # Actualizar timestamp de referencia
+        touch "$destino"
     done <<< "$versiones"
-
-    # Limpiar timestamps temporales
-    rm -f "${destino}/.timestamp" "${destino}/.timestamp_prev"
 
     _ok "${servicio} Linux: ${descargados} paquete(s) descargado(s)"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LINUX — Descargar todos los servicios
-# ─────────────────────────────────────────────────────────────────────────────
 _descargar_linux() {
     echo ""
     _info "=== Descargando paquetes Linux (RPM) ==="
@@ -272,7 +227,28 @@ _descargar_linux() {
 
     _descargar_linux_paquete "httpd"  "Apache"
     _descargar_linux_paquete "nginx"  "Nginx"
-    _descargar_linux_paquete "tomcat" "Tomcat"
+
+    # Tomcat en Fedora 43 puede llamarse tomcat, tomcat10, tomcat11, etc.
+    # Buscar el nombre correcto del paquete disponible
+    local tomcat_pkg=""
+    for _pkg in tomcat11 tomcat10 tomcat; do
+        if dnf repoquery --arch "$(uname -m)" "$_pkg" &>/dev/null 2>&1 | grep -q .; then
+            tomcat_pkg="$_pkg"
+            break
+        fi
+        # repoquery puede no devolver nada si no existe — verificar con info
+        if dnf info "$_pkg" &>/dev/null 2>&1; then
+            tomcat_pkg="$_pkg"
+            break
+        fi
+    done
+
+    if [[ -n "$tomcat_pkg" ]]; then
+        _info "Paquete Tomcat detectado: $tomcat_pkg"
+        _descargar_linux_paquete "$tomcat_pkg" "Tomcat"
+    else
+        _warn "No se encontró paquete Tomcat en los repos — omitiendo"
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,30 +259,31 @@ _descargar_windows_apache() {
     local destino="${WIN_DIR}/Apache"
     mkdir -p "$destino"
     _sep
-    _info "Windows — Apache (ApacheLounge)"
+    _info "Windows — Apache (ApacheLounge VS18 Win64)"
     _sep
 
     _proc "Consultando versiones en ApacheLounge..."
 
-    # Obtener página de descargas de ApacheLounge
+    # Los ZIPs están en /download/VS18/ — requiere -L y User-Agent de navegador
     local pagina
-    pagina=$(curl -sf --connect-timeout 15 \
-             "https://www.apachelounge.com/download/" 2>/dev/null) || {
+    pagina=$(curl -sfL \
+             -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+             --connect-timeout 15 \
+             "https://www.apachelounge.com/download/VS18/" 2>/dev/null) || {
         _warn "No se pudo acceder a ApacheLounge — omitiendo Apache Windows"
         return 0
     }
 
-    # Extraer URLs de ZIPs de Apache (ej: httpd-2.4.62-250207-win64-VS17.zip)
+    # Patrón real: httpd-2.4.66-260223-Win64-VS18.zip
     local urls
     urls=$(echo "$pagina" \
-           | grep -oP 'href="[^"]*httpd-[\d.]+-[^"]*win64[^"]*\.zip"' \
+           | grep -oP 'href="[^"]*httpd-[0-9.]+-[0-9]+-Win64-VS[0-9]+\.zip"' \
            | grep -oP '"[^"]+"' | tr -d '"' \
            | sed 's|^/|https://www.apachelounge.com/|' \
-           | grep -v "debug\|devel\|mod_" \
            | sort -Vr | head -"$MAX_VERSIONS")
 
     if [[ -z "$urls" ]]; then
-        _warn "No se encontraron binarios Apache en ApacheLounge"
+        _warn "No se encontraron binarios Apache Win64 en ApacheLounge"
         return 0
     fi
 
@@ -316,19 +293,41 @@ _descargar_windows_apache() {
         local nombre; nombre=$(basename "$url")
         local archivo="${destino}/${nombre}"
 
-        _proc "Descargando ${nombre}..."
-        if curl -sf --connect-timeout 30 -L \
-                --progress-bar \
-                -o "$archivo" "$url" 2>/dev/null; then
-            # Buscar hash SHA256 oficial en la página
-            local hash_url
-            hash_url=$(echo "$pagina" \
-                       | grep -oP "href=\"[^\"]*${nombre%.zip}[^\"]*sha256[^\"]*\"" \
-                       | grep -oP '"[^"]+"' | tr -d '"' | head -1)
-            [[ -n "$hash_url" && "$hash_url" != http* ]] && \
-                hash_url="https://www.apachelounge.com/${hash_url}"
+        if [[ -f "$archivo" ]]; then
+            _info "${nombre} ya existe — omitiendo"
+            (( descargados++ ))
+            continue
+        fi
 
-            _verificar_hash_oficial "$archivo" "$hash_url" "sha256"
+        _proc "Descargando ${nombre}..."
+        if curl -fL \
+                -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+                --connect-timeout 60 \
+                --progress-bar \
+                -o "$archivo" "$url" 2>/dev/null && [[ -s "$archivo" ]]; then
+
+            # Buscar .txt con checksums SHA256
+            local checksum_url
+            checksum_url=$(echo "$pagina" \
+                | grep -oP "href=\"[^\"]*${nombre}[^\"]*\.txt\"" \
+                | grep -oP '"[^"]+"' | tr -d '"' | head -1)
+            if [[ -n "$checksum_url" ]]; then
+                [[ "$checksum_url" != http* ]] && \
+                    checksum_url="https://www.apachelounge.com${checksum_url}"
+                local sha256_oficial
+                sha256_oficial=$(curl -sf -A "Mozilla/5.0" "$checksum_url" 2>/dev/null \
+                    | grep -i "sha256" | grep -oP '[a-fA-F0-9]{64}' | head -1)
+                if [[ -n "$sha256_oficial" ]]; then
+                    local sha256_local
+                    sha256_local=$(sha256sum "$archivo" | awk '{print $1}')
+                    if [[ "${sha256_local,,}" == "${sha256_oficial,,}" ]]; then
+                        _ok "SHA256 verificado contra oficial"
+                    else
+                        _warn "SHA256 no coincide — guardando hash local"
+                    fi
+                fi
+            fi
+            _generar_sha256 "$archivo" > /dev/null
             (( descargados++ ))
         else
             _warn "No se pudo descargar ${nombre}"
@@ -361,9 +360,9 @@ _descargar_windows_nginx() {
     # Extraer URLs de ZIPs Windows (nginx/nginx-X.Y.Z.zip)
     local urls
     urls=$(echo "$pagina" \
-           | grep -oP 'href="[^"]*/nginx/nginx-[\d.]+\.zip"' \
+           | grep -oP 'href="[^"]*/nginx-[\d.]+\.zip"' \
            | grep -oP '"[^"]+"' | tr -d '"' \
-           | sed 's|^/|https://nginx.org|' \
+           | sed 's|^/download/|https://nginx.org/download/|' \
            | sort -Vr | head -"$MAX_VERSIONS")
 
     if [[ -z "$urls" ]]; then
@@ -519,60 +518,6 @@ _mostrar_resumen() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Subir al servidor FTP
-# ─────────────────────────────────────────────────────────────────────────────
-_subir_ftp() {
-    _sep
-    _info "Subiendo al servidor FTP..."
-    _sep
-    echo ""
-
-    local errores=0
-    local subidos=0
-
-    # Recorrer todos los archivos (paquetes + hashes)
-    while IFS= read -r archivo; do
-        [[ -z "$archivo" ]] && continue
-
-        # Calcular ruta relativa desde WORK_DIR
-        local ruta_relativa="${archivo#${WORK_DIR}/}"
-        local ruta_ftp="${FTP_DEST_DIR}/${ruta_relativa}"
-        # Normalizar doble slash
-        ruta_ftp=$(echo "$ruta_ftp" | sed 's|//|/|g')
-
-        local dir_ftp; dir_ftp=$(dirname "$ruta_ftp")
-        local nombre; nombre=$(basename "$archivo")
-
-        # Crear directorio en FTP (curl crea directorios con --ftp-create-dirs)
-        _proc "Subiendo ${ruta_relativa}..."
-
-        if curl -sf \
-                --connect-timeout 30 \
-                $FTP_SSL \
-                -u "${FTP_USER}:${FTP_PASS}" \
-                --ftp-create-dirs \
-                -T "$archivo" \
-                "ftp://${FTP_HOST}:${FTP_PORT}${ruta_ftp}" 2>/dev/null; then
-            (( subidos++ ))
-        else
-            _warn "Error al subir: ${nombre}"
-            (( errores++ ))
-        fi
-    done < <(find "$WORK_DIR" -type f \( \
-                -name "*.rpm" \
-                -o -name "*.zip" \
-                -o -name "*.exe" \
-                -o -name "*.msi" \
-                -o -name "*.sha256" \
-             \) | sort)
-
-    echo ""
-    _ok "Subidos: ${subidos} archivo(s)"
-    [[ $errores -gt 0 ]] && _warn "Errores: ${errores} archivo(s) no se pudieron subir"
-    return $(( errores > 0 ? 1 : 0 ))
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Menú de selección de qué descargar
 # ─────────────────────────────────────────────────────────────────────────────
 _menu_seleccion() {
@@ -603,17 +548,14 @@ main() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}  FTP Repo Builder — Repositorio de paquetes HTTP${NC}"
+    echo -e "${CYAN}  FTP Repo Builder — Repositorio local de paquetes HTTP${NC}"
     echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    _info "Directorio de salida: ${WORK_DIR}"
+    _info "Versiones por paquete: ${MAX_VERSIONS}"
     echo ""
 
     _verificar_deps
-    echo ""
-
-    _pedir_credenciales_ftp
-    echo ""
-
-    _verificar_ftp
     echo ""
 
     _menu_seleccion
@@ -622,6 +564,8 @@ main() {
     # Crear estructura de directorios
     mkdir -p "${LINUX_DIR}/Apache" "${LINUX_DIR}/Nginx" "${LINUX_DIR}/Tomcat"
     mkdir -p "${WIN_DIR}/Apache"   "${WIN_DIR}/Nginx"   "${WIN_DIR}/Tomcat"
+    _ok "Estructura creada en: ${WORK_DIR}/http/"
+    echo ""
 
     # Descargar
     $DESCARGAR_LINUX   && _descargar_linux
@@ -629,32 +573,22 @@ main() {
 
     _mostrar_resumen
 
-    # Confirmar antes de subir
-    _input "¿Subir al servidor FTP ${FTP_HOST}? [S/N]: "; read -r confirm
-    if [[ ! "${confirm^^}" =~ ^(S|SI|Y|YES)$ ]]; then
-        _info "Cancelado. Los archivos quedan en: ${WORK_DIR}"
-        trap - EXIT   # No limpiar el directorio temporal
-        exit 0
-    fi
-
-    echo ""
-    _subir_ftp
-
-    echo ""
     _sep
-    _ok "Repositorio FTP construido exitosamente"
-    _sep
+    _ok "Listo — sube la carpeta con FileZilla:"
     echo ""
-    _info "Estructura en el FTP (${FTP_DEST_DIR}):"
+    _info "  Origen  (local) : ${WORK_DIR}/http/"
+    _info "  Destino (FTP)   : directorio personal del usuario FTP"
+    echo ""
+    _info "Estructura:"
     echo "    http/"
     echo "    ├── Linux/"
-    echo "    │   ├── Apache/   (RPM + .sha256)"
-    echo "    │   ├── Nginx/    (RPM + .sha256)"
-    echo "    │   └── Tomcat/   (RPM + .sha256)"
+    echo "    │   ├── Apache/   (*.rpm + *.sha256)"
+    echo "    │   ├── Nginx/    (*.rpm + *.sha256)"
+    echo "    │   └── Tomcat/   (*.rpm + *.sha256)"
     echo "    └── Windows/"
-    echo "        ├── Apache/   (.zip ApacheLounge + .sha256)"
-    echo "        ├── Nginx/    (.zip oficial + .sha256)"
-    echo "        └── Tomcat/   (.exe oficial + .sha256)"
+    echo "        ├── Apache/   (*.zip + *.sha256)"
+    echo "        ├── Nginx/    (*.zip + *.sha256)"
+    echo "        └── Tomcat/   (*.exe + *.sha256)"
     echo ""
 }
 
