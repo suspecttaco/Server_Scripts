@@ -44,6 +44,33 @@ function Install-FtpServer {
     Enable-FtpService
 
     msg_success "Servidor FTP instalado y configurado"
+
+    # ── Hook FTPS ────────────────────────────────────────────────────
+    # Ofrecer FTPS al terminar la instalacion del servidor FTP
+    # $SCRIPT_DIR viene del scope de ftp_manager.ps1 (script raiz)
+    $sslLibPath = $null
+    if ($SCRIPT_DIR -and (Test-Path (Join-Path $SCRIPT_DIR "ssl_lib\ssl.ps1"))) {
+        $sslLibPath = Join-Path $SCRIPT_DIR "ssl_lib\ssl.ps1"
+    } else {
+        # Fallback: buscar relativo al directorio de ftp_lib
+        $_ftpLibDir = Split-Path -Parent $PSCommandPath
+        $_ftpRootDir = Split-Path -Parent $_ftpLibDir
+        $sslLibPath = Join-Path $_ftpRootDir "ssl_lib\ssl.ps1"
+    }
+    if (Test-Path $sslLibPath) {
+        Write-Host ""
+        Write-Separator
+        msg_input "¿Desea activar FTPS (SSL en FTP) ahora? [S/N]: "
+        $ftpsResp = Read-Host
+        if ($ftpsResp -match '^[SsYy]') {
+            . $sslLibPath
+            ssl_configurar_ftp
+        } else {
+            msg_info "FTPS omitido — puede activarlo desde ftp_manager.ps1 → opcion 6"
+        }
+    } else {
+        msg_info "ssl_lib no encontrado — active FTPS desde ftp_manager.ps1 → opcion 6"
+    }
 }
 
 function New-FtpWindowsGroups {
