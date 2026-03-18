@@ -430,9 +430,9 @@ function http_seleccionar_version {
 # Equivalente a http_seleccionar_puerto de FunctionsHTTP-B.sh
 #
 function http_seleccionar_puerto {
-    param([string]$Servicio)
+    param([string]$Servicio, [string]$PasoLabel = "Paso 3 de 4 — Puerto de escucha")
 
-    http_draw_servicio_header $Servicio "Paso 3 de 4 — Puerto de escucha"
+    http_draw_servicio_header $Servicio $PasoLabel
 
     $puertoDefault = switch ($Servicio) {
         "iis" { $Script:HTTP_PUERTO_DEFAULT_IIS }
@@ -564,18 +564,26 @@ Revision=1
 # Equivalente a http_crear_index de FunctionsHTTP-B.sh
 #
 function http_crear_index {
-    param([string]$Servicio, [string]$Version, [int]$Puerto)
+    param([string]$Servicio, [string]$Version, [int]$Puerto, [int]$PuertoHttps = 0)
 
     $webroot = http_get_webroot $Servicio
     $usuario = http_get_usuario_servicio $Servicio
-    $fecha = Get-Date -Format "yyyy-MM-dd HH:mm"
+    $fecha   = Get-Date -Format "yyyy-MM-dd HH:mm"
 
     $nombreDisplay = switch ($Servicio) {
-        "iis" { "IIS (Internet Information Services)" }
+        "iis"    { "IIS (Internet Information Services)" }
         "apache" { "Apache HTTP Server" }
-        "nginx" { "Nginx" }
+        "nginx"  { "Nginx" }
         "tomcat" { "Apache Tomcat" }
-        default { $Servicio }
+        default  { $Servicio }
+    }
+
+    # Filas de puerto — una o dos según si SSL está activo
+    $filasPuerto = if ($PuertoHttps -gt 0) {
+        "        <tr><td>Puerto HTTP</td>  <td>${Puerto}/tcp &rarr; redirect HTTPS</td></tr>`n" +
+        "        <tr><td>Puerto HTTPS</td> <td style=`"color:#2a7;font-weight:bold`">${PuertoHttps}/tcp (SSL activo)</td></tr>"
+    } else {
+        "        <tr><td>Puerto</td> <td>${Puerto}/tcp</td></tr>"
     }
 
     msg_info "Generando index.html en $webroot..."
@@ -595,7 +603,7 @@ $html = @"
     <h1>$nombreDisplay</h1>
     <table>
         <tr><td>Version</td> <td>$Version</td></tr>
-        <tr><td>Puerto</td>  <td>${Puerto}/tcp</td></tr>
+        $filasPuerto
         <tr><td>Webroot</td> <td>$webroot</td></tr>
         <tr><td>Usuario</td> <td>$usuario</td></tr>
         <tr><td>Fecha</td>   <td>$fecha</td></tr>
@@ -706,12 +714,22 @@ function http_instalar_iis {
     draw_line
     Import-Module WebAdministration -ErrorAction SilentlyContinue
 
-    # Configurar el binding al puerto seleccionado
+    # Configurar el binding HTTP al puerto seleccionado.
+    # Solo se elimina el binding HTTP anterior — el HTTPS se preserva
+    # para no afectar el sitio FTP ni un SSL ya configurado.
     $site = Get-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
     if ($site) {
-        Remove-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue
+        Get-WebBinding -Name "Default Web Site" -Protocol "http" `
+            -ErrorAction SilentlyContinue | Remove-WebBinding -ErrorAction SilentlyContinue
         New-WebBinding -Name "Default Web Site" -Protocol http -Port $Puerto | Out-Null
-        msg_success "Binding configurado: puerto $Puerto"
+        msg_success "Binding HTTP configurado: puerto $Puerto"
+        # Informar si hay binding HTTPS activo que se preservó
+        $httpsB = Get-WebBinding -Name "Default Web Site" -Protocol "https" `
+                  -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($httpsB) {
+            $hp = ($httpsB.bindingInformation -split ':')[1]
+            msg_info "Binding HTTPS existente preservado en puerto ${hp}/tcp"
+        }
     }
 
     # Paso 4: Puerto (ya configurado en el binding)
@@ -759,186 +777,194 @@ function http_instalar_apache {
 
     http_draw_servicio_header "Apache (httpd)" "Paso 4 de 4 — Instalacion"
 
-    # Paso 1: Instalar via choco
+    # ── Paso 1: Instalar via Chocolatey ──────────────────────────────────────
+    # El chocolateyInstall.ps1 del paquete intenta configurar Apache en el
+    # puerto 8080 hardcodeado. Si ese puerto está ocupado el script post-install
+    # falla, pero los binarios SÍ se descargan.
+    # Usamos --ignore-package-exit-codes para que choco no marque el paquete
+    # como fallido y verificamos por presencia de httpd.exe en disco.
     draw_line
     msg_info "PASO 1/5 — Instalacion via Chocolatey"
     draw_line
 
-    if ($Version -eq "latest") {
-        & choco install apache-httpd -y >$null 2>&1
-    }
-    else {
-        & choco install apache-httpd "--version=$Version" -y >$null 2>&1
+    # Habilitar allowGlobalConfirmation temporalmente
+    $globalConfWasEnabled = (choco feature list 2>$null) -match "allowGlobalConfirmation.*Enabled"
+    if (-not $globalConfWasEnabled) {
+        & choco feature enable -n allowGlobalConfirmation 2>$null | Out-Null
+        msg_info "allowGlobalConfirmation habilitado temporalmente"
     }
 
-    # choco puede devolver exit code != 0 por warnings del script post-instalacion.
-    # Verificamos que httpd.exe existe en disco como prueba real del exito.
+    msg_process "Ejecutando choco install apache-httpd (puede tardar varios minutos)..."
+    Write-Host ""
+
+    if ($Version -eq "latest") {
+        & choco install apache-httpd -y --no-progress --ignore-package-exit-codes
+    } else {
+        & choco install apache-httpd "--version=$Version" -y --no-progress --ignore-package-exit-codes
+    }
+    $chocoExitCode = $LASTEXITCODE
+
+    Write-Host ""
+    msg_info "choco exit code: $chocoExitCode (se ignora — verificamos por httpd.exe)"
+
+    # Restaurar allowGlobalConfirmation
+    if (-not $globalConfWasEnabled) {
+        & choco feature disable -n allowGlobalConfirmation 2>$null | Out-Null
+    }
+
+    # Buscar httpd.exe — choco puede instalarlo en varias rutas
     $httpdExeVerif = $null
+    msg_process "Buscando httpd.exe..."
     $candidatosExe = @(
+        "$env:ProgramData\chocolatey\lib\apache-httpd\tools\Apache24\bin\httpd.exe",
         "$env:APPDATA\Apache24\bin\httpd.exe",
         "$env:APPDATA\Apache2.4\bin\httpd.exe",
+        "$env:USERPROFILE\AppData\Roaming\Apache24\bin\httpd.exe",
+        "$env:USERPROFILE\AppData\Roaming\Apache2.4\bin\httpd.exe",
         "C:\Apache24\bin\httpd.exe",
-        "C:\tools\httpd\bin\httpd.exe"
+        "C:\Apache2.4\bin\httpd.exe",
+        "C:\tools\httpd\bin\httpd.exe",
+        "C:\tools\Apache24\bin\httpd.exe"
     )
     foreach ($c in $candidatosExe) {
         if (Test-Path $c) { $httpdExeVerif = $c; break }
     }
+
+    # Búsqueda recursiva en chocolatey lib
     if (-not $httpdExeVerif) {
-        $httpdItem = Get-ChildItem -Path $env:APPDATA -Recurse `
-            -Filter httpd.exe -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-        if ($httpdItem) { $httpdExeVerif = $httpdItem.FullName }
+        msg_process "Busqueda recursiva en chocolatey lib..."
+        $chocoLib = "$env:ProgramData\chocolatey\lib\apache-httpd"
+        if (Test-Path $chocoLib) {
+            $found = Get-ChildItem $chocoLib -Recurse -Filter httpd.exe `
+                     -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $httpdExeVerif = $found.FullName }
+        }
     }
+
+    # Búsqueda recursiva en AppData
     if (-not $httpdExeVerif) {
-        msg_error "Fallo choco install apache-httpd — httpd.exe no encontrado en disco"
+        msg_process "Busqueda recursiva en AppData..."
+        $found = Get-ChildItem $env:APPDATA -Recurse -Filter httpd.exe `
+                 -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) { $httpdExeVerif = $found.FullName }
+    }
+
+    # Búsqueda recursiva en USERPROFILE
+    if (-not $httpdExeVerif) {
+        msg_process "Busqueda recursiva en USERPROFILE..."
+        $found = Get-ChildItem $env:USERPROFILE -Recurse -Filter httpd.exe `
+                 -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) { $httpdExeVerif = $found.FullName }
+    }
+
+    if (-not $httpdExeVerif) {
+        msg_error "httpd.exe no encontrado en disco tras la instalacion"
+        msg_info  "  APPDATA     = $env:APPDATA"
+        msg_info  "  USERPROFILE = $env:USERPROFILE"
+        msg_info  "  ProgramData = $env:ProgramData"
+        msg_info  "Verifique: Get-ChildItem C:\ -Recurse -Filter httpd.exe -ErrorAction SilentlyContinue"
         return $false
     }
     msg_success "apache-httpd instalado — httpd.exe en: $httpdExeVerif"
-    # Paso 2: Usuario dedicado
-    # Se ejecuta despues del paso 3 para usar el webroot real detectado
 
-    # Paso 3: Localizar httpd.conf real y configurar puerto
-    # choco instala Apache en AppData\Roaming, no en C:\tools\httpd.
-    # -Depth no existe en PS 5.1 (PS 6+), por eso usamos rutas conocidas primero.
+    # ── Paso 2: Localizar httpd.conf y configurar puerto ─────────────────────
     Write-Host ""
     draw_line
-    msg_info "PASO 3/5 — Localizar httpd.conf y configurar puerto"
+    msg_info "PASO 2/5 — Localizar httpd.conf y configurar puerto"
     draw_line
-    # Rutas candidatas donde choco suele instalar apache-httpd
-    $candidatos = @(
-        $Script:HTTP_CONF_APACHE,
+
+    $apacheRoot    = Split-Path (Split-Path $httpdExeVerif)
+    $candidatos    = @(
+        (Join-Path $apacheRoot "conf\httpd.conf"),
         "$env:APPDATA\Apache24\conf\httpd.conf",
         "$env:APPDATA\Apache2.4\conf\httpd.conf",
         "C:\Apache24\conf\httpd.conf",
-        "C:\Apache2.4\conf\httpd.conf",
-        "C:\tools\httpd\conf\httpd.conf"
+        "C:\tools\httpd\conf\httpd.conf",
+        $Script:HTTP_CONF_APACHE
     )
     $httpdConfReal = $null
     foreach ($c in $candidatos) {
         if (Test-Path $c) { $httpdConfReal = Get-Item $c; break }
     }
-    # Fallback: buscar en AppData completo (PS5 compatible, sin -Depth)
     if (-not $httpdConfReal) {
-        $httpdConfReal = Get-ChildItem -Path $env:APPDATA -Recurse `
-            -Filter httpd.conf -ErrorAction SilentlyContinue |
-        Select-Object -First 1
+        $httpdConfReal = Get-ChildItem $env:APPDATA -Recurse -Filter httpd.conf `
+                         -ErrorAction SilentlyContinue | Select-Object -First 1
     }
+
     if ($httpdConfReal) {
         $Script:HTTP_CONF_APACHE = $httpdConfReal.FullName
-        $apacheRoot = Split-Path (Split-Path $httpdConfReal.FullName)
-        $htdocs = Join-Path $apacheRoot "htdocs"
+        $apacheRootReal = Split-Path (Split-Path $httpdConfReal.FullName)
+        $htdocs = Join-Path $apacheRootReal "htdocs"
         if (Test-Path $htdocs) { $Script:HTTP_DIR_APACHE = $htdocs }
-        msg_info "httpd.conf localizado: $($httpdConfReal.FullName)"
+        msg_info "httpd.conf: $($httpdConfReal.FullName)"
         http_crear_backup $Script:HTTP_CONF_APACHE
 
-        # Corregir SRVROOT — choco instala en AppData pero httpd.conf apunta a c:/Apache24
-        # Apache requiere barras hacia adelante en las rutas, nunca backslashes
-        $srvrootCorrecta = $apacheRoot -replace '\\', '/'
-        (Get-Content $Script:HTTP_CONF_APACHE) `
-            -replace 'Define SRVROOT ".*"', "Define SRVROOT `"$srvrootCorrecta`"" |
-        Set-Content $Script:HTTP_CONF_APACHE -Force
-        msg_success "SRVROOT corregida: $srvrootCorrecta"
+        $srvrootCorrecta = $apacheRootReal -replace '\\', '/'
+        $bytes = [System.IO.File]::ReadAllBytes($Script:HTTP_CONF_APACHE)
+        $bom   = ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+        $contenido = if ($bom) {
+            [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+        } else { [System.Text.Encoding]::UTF8.GetString($bytes) }
 
-        # Verificar sintaxis antes de continuar
-        $httpdExe = Join-Path $apacheRoot "bin\httpd.exe"
-        if (Test-Path $httpdExe) {
-            $syntaxCheck = & $httpdExe -t 2>&1
-            if ($syntaxCheck -match "Syntax OK") {
-                msg_success "httpd.conf: Syntax OK"
-            }
-            else {
-                msg_alert "httpd.conf tiene advertencias — verifique manualmente:"
-                $syntaxCheck | ForEach-Object { Write-Host "    $_" }
-            }
-        }
+        $contenido = $contenido -replace 'Define SRVROOT ".*"',   "Define SRVROOT `"$srvrootCorrecta`""
+        $contenido = $contenido -replace 'Listen\s+\d+',          "Listen $Puerto"
+        $contenido = $contenido -replace 'ServerName\s+\S+:\d+',  "ServerName localhost:$Puerto"
 
-        $bytesApache = [System.IO.File]::ReadAllBytes($Script:HTTP_CONF_APACHE)
-        if ($bytesApache[0] -eq 0xEF -and $bytesApache[1] -eq 0xBB -and $bytesApache[2] -eq 0xBF) {
-            $contenidoApache = [System.Text.Encoding]::UTF8.GetString($bytesApache, 3, $bytesApache.Length - 3)
-        }
-        else {
-            $contenidoApache = [System.Text.Encoding]::UTF8.GetString($bytesApache)
-        }
-        $contenidoApache = $contenidoApache -replace 'Listen\s+\d+', "Listen $Puerto"
-        $contenidoApache = $contenidoApache -replace 'ServerName\s+\S+:\d+', "ServerName localhost:$Puerto"
         $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-        [System.IO.File]::WriteAllText($Script:HTTP_CONF_APACHE, $contenidoApache, $utf8NoBom)
-        msg_success "Puerto $Puerto configurado en httpd.conf"
-    }
-    else {
-        msg_alert "httpd.conf no encontrado — se continuara sin configurar puerto"
+        [System.IO.File]::WriteAllText($Script:HTTP_CONF_APACHE, $contenido, $utf8NoBom)
+        msg_success "Puerto $Puerto y SRVROOT configurados en httpd.conf"
+
+        $syntaxOut = & $httpdExeVerif -t 2>&1
+        if ($syntaxOut -match "Syntax OK") { msg_success "Sintaxis: OK" }
+        else {
+            msg_alert "Advertencias de sintaxis:"
+            $syntaxOut | Select-Object -First 5 | ForEach-Object { Write-Host "    $_" }
+        }
+    } else {
+        msg_alert "httpd.conf no encontrado — el servicio puede no iniciar correctamente"
     }
 
-    # Paso 2: Usuario dedicado (aqui, con webroot real ya detectado)
+    # ── Paso 3: Usuario dedicado ──────────────────────────────────────────────
     Write-Host ""
     draw_line
-    msg_info "PASO 2/5 — Usuario dedicado"
+    msg_info "PASO 3/5 — Usuario dedicado"
     draw_line
     http_crear_usuario_dedicado $Script:HTTP_USUARIO_APACHE $Script:HTTP_DIR_APACHE
 
-    # Paso 4: Detectar nombre real del servicio Apache registrado por choco
-    # choco registra el servicio como 'Apache' (no 'Apache2.4').
-    # Si no hay servicio aun, localizamos httpd.exe y lo registramos.
+    # ── Paso 4: Registrar servicio de Windows ─────────────────────────────────
     Write-Host ""
     draw_line
     msg_info "PASO 4/5 — Registro como servicio de Windows"
     draw_line
-    # Detectar el servicio Apache que choco pudo haber registrado
-    $svcApache = Get-Service -ErrorAction SilentlyContinue | `
-        Where-Object { $_.Name -match '^Apache' -or $_.Name -match '^httpd' } | `
-        Select-Object -First 1
+
+    $svcApache = Get-Service -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -match '^Apache|^httpd' } |
+                 Select-Object -First 1
     if ($svcApache) {
         $Script:HTTP_WINSVC_APACHE = $svcApache.Name
-        msg_info "Servicio Apache detectado: '$($svcApache.Name)'"
-        msg_success "Servicio ya registrado por choco"
-    }
-    else {
-        # No hay servicio: buscar httpd.exe en rutas conocidas y registrarlo
-        $exeCandidatos = @(
-            "$env:APPDATA\Apache24\bin\httpd.exe",
-            "$env:APPDATA\Apache2.4\bin\httpd.exe",
-            "C:\Apache24\bin\httpd.exe",
-            "C:\tools\httpd\bin\httpd.exe"
-        )
-        $httpdExe = $null
-        foreach ($e in $exeCandidatos) {
-            if (Test-Path $e) { $httpdExe = $e; break }
-        }
-        if (-not $httpdExe) {
-            # Ultimo recurso: buscar en AppData (PS5 sin -Depth, sin operador ?.)
-            $httpdItem = Get-ChildItem -Path $env:APPDATA -Recurse `
-                -Filter httpd.exe -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-            if ($httpdItem) { $httpdExe = $httpdItem.FullName }
-        }
-        if ($httpdExe) {
-            msg_info "httpd.exe localizado: $httpdExe"
-            & $httpdExe -k install -n "Apache2.4" 2>$null
-            $Script:HTTP_WINSVC_APACHE = "Apache2.4"
-            msg_success "Servicio Apache2.4 registrado"
-        }
-        else {
-            msg_alert "httpd.exe no localizado — el servicio puede ya estar registrado"
-        }
+        msg_info "Servicio detectado: $($svcApache.Name)"
+    } else {
+        & $httpdExeVerif -k install -n "Apache2.4" 2>$null
+        $Script:HTTP_WINSVC_APACHE = "Apache2.4"
+        msg_success "Servicio Apache2.4 registrado"
     }
 
-    # Paso 5: Activar servicio + firewall + index
+    # ── Paso 5: Iniciar servicio ──────────────────────────────────────────────
     Write-Host ""
     draw_line
     msg_info "PASO 5/5 — Activacion del servicio"
     draw_line
+
     Set-Service -Name $Script:HTTP_WINSVC_APACHE -StartupType Automatic `
         -ErrorAction SilentlyContinue
-
-    Stop-Service -Name $Script:HTTP_WINSVC_APACHE -Force -ErrorAction SilentlyContinue
+    Stop-Service  $Script:HTTP_WINSVC_APACHE -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
-    Start-Service -Name $Script:HTTP_WINSVC_APACHE -ErrorAction SilentlyContinue
+    Start-Service $Script:HTTP_WINSVC_APACHE -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
     if (check_service_active $Script:HTTP_WINSVC_APACHE) {
-        msg_success "Apache2.4 iniciado y activo"
-    }
-    else {
+        msg_success "Apache iniciado y activo"
+    } else {
         msg_error "Apache no levanto — revise el Visor de Eventos"
         return $false
     }
@@ -946,17 +972,11 @@ function http_instalar_apache {
     _http_configurar_firewall_inicial "apache" $Puerto
     Write-Host ""
     http_crear_index "apache" $Version $Puerto
-
     Write-Host ""
     http_draw_resumen "Apache HTTP Server" "$Puerto" "$Version"
     return $true
 }
 
-#
-# http_instalar_nginx
-#
-# Instala Nginx para Windows vía Chocolatey y lo registra como servicio.
-#
 function http_instalar_nginx {
     param([string]$Version, [int]$Puerto)
 
@@ -1346,9 +1366,33 @@ function http_menu_instalar {
         }
         "reinstalar:*" {
             $servicio = $seleccion -replace "reinstalar:", ""
-            msg_alert "Desinstalando $servicio..."
-            choco uninstall (http_nombre_paquete $servicio) -y 2>$null
-            msg_success "Desinstalado. Continuando con instalacion limpia..."
+
+            # IIS se gestiona con DISM/WindowsFeature, no con choco.
+            # Reinstalar IIS puede resetear applicationHost.config
+            # y dejar inutilizable el sitio FTP si estaba configurado.
+            if ($servicio -eq "iis") {
+                Write-Host ""
+                msg_alert "ADVERTENCIA: Reinstalar IIS puede afectar el servidor FTP."
+                msg_alert "Si tiene IIS FTP configurado, puede quedar inutilizable."
+                msg_info  "Se recomienda usar 'Reconfigurar' en lugar de reinstalar."
+                Write-Host ""
+                msg_input "¿Confirma que desea reinstalar IIS de todas formas? [S/N]: "
+                $confirmReinstall = Read-Host
+                if ($confirmReinstall -notmatch '^[SsYy]') {
+                    msg_info "Reinstalacion cancelada"
+                    Start-Sleep -Seconds 1
+                    return
+                }
+                # Para IIS: desinstalar features via DISM
+                msg_alert "Desinstalando IIS..."
+                Uninstall-WindowsFeature -Name "Web-Server" -IncludeManagementTools `
+                    -ErrorAction SilentlyContinue | Out-Null
+                msg_success "IIS desinstalado. Continuando con instalacion limpia..."
+            } else {
+                msg_alert "Desinstalando $servicio..."
+                choco uninstall (http_nombre_paquete $servicio) -y 2>$null
+                msg_success "Desinstalado. Continuando con instalacion limpia..."
+            }
             Start-Sleep -Seconds 2
         }
         "reconfigurar:*" {
@@ -1367,12 +1411,23 @@ function http_menu_instalar {
                 "iis" {
                     # IIS no usa archivo de texto — el puerto se gestiona
                     # via WebAdministration con bindings del sitio web.
+                    # Solo se reemplaza el binding HTTP — se preserva el HTTPS
+                    # para no romper SSL ni el sitio FTP.
                     Import-Module WebAdministration -ErrorAction SilentlyContinue
                     $site = Get-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
                     if ($site) {
-                        Remove-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue
+                        # Eliminar SOLO el binding HTTP — dejar HTTPS intacto
+                        Get-WebBinding -Name "Default Web Site" -Protocol "http" `
+                            -ErrorAction SilentlyContinue | Remove-WebBinding -ErrorAction SilentlyContinue
                         New-WebBinding -Name "Default Web Site" -Protocol http -Port $puertoNew | Out-Null
-                        msg_success "Binding IIS actualizado: puerto $puertoNew"
+                        msg_success "Binding HTTP actualizado: puerto $puertoNew"
+                        # Informar si hay binding HTTPS activo
+                        $httpsBinding = Get-WebBinding -Name "Default Web Site" -Protocol "https" `
+                            -ErrorAction SilentlyContinue | Select-Object -First 1
+                        if ($httpsBinding) {
+                            $httpsPort = ($httpsBinding.bindingInformation -split ':')[1]
+                            msg_info "Binding HTTPS preservado en puerto ${httpsPort}/tcp"
+                        }
                     } else {
                         msg_alert "Sitio 'Default Web Site' no encontrado en IIS"
                     }
@@ -1443,6 +1498,27 @@ function http_menu_instalar {
             _http_configurar_firewall_inicial $servicio $puertoNew
             http_crear_index $servicio $verActual $puertoNew
             http_draw_resumen $servicio $puertoNew $verActual
+
+            # ── Hook SSL en reconfiguración ───────────────────────────
+            $sslLibPath = Join-Path $PSScriptRoot "..\ssl_lib\ssl.ps1"
+            if (Test-Path $sslLibPath) {
+                Write-Host ""
+                Write-Separator
+                msg_input "¿Desea activar/reconfigurar SSL/TLS en ${servicio}? [S/N]: "
+                $sslResp = Read-Host
+                if ($sslResp -match '^[SsYy]') {
+                    . $sslLibPath
+                    switch ($servicio) {
+                        "iis"    { ssl_configurar_iis    }
+                        "apache" { ssl_configurar_apache }
+                        "nginx"  { ssl_configurar_nginx  }
+                        "tomcat" { ssl_configurar_tomcat }
+                    }
+                } else {
+                    msg_info "SSL omitido — puede activarlo desde ssl_manager.ps1"
+                }
+            }
+
             msg_pause
             return
         }
@@ -1450,6 +1526,66 @@ function http_menu_instalar {
     }
 
     Write-Host ""
+
+    # ── Selección de fuente de instalación ─────────────────────────────────
+    Write-Separator
+    msg_info "Fuente de instalación"
+    Write-Separator
+    Write-Host ""
+    Write-Host "  1) Repositorio oficial (internet)"
+    Write-Host "  2) Repositorio FTP local"
+    Write-Host ""
+    $ftpFuente = ""
+    do {
+        msg_input "Fuente [1/2]: "
+        $ftpFuente = Read-Host
+        if ($ftpFuente -ne "1" -and $ftpFuente -ne "2") {
+            msg_error "Ingrese 1 o 2"; $ftpFuente = ""
+        }
+    } while ([string]::IsNullOrEmpty($ftpFuente))
+
+    if ($ftpFuente -eq "2") {
+        $ftpSrcLib = Join-Path $PSScriptRoot "ws_ftp_source.ps1"
+        if (-not (Test-Path $ftpSrcLib)) {
+            msg_error "ws_ftp_source.ps1 no encontrado en: $ftpSrcLib"
+            msg_pause; return
+        }
+        . $ftpSrcLib
+
+        # Paso 2+3: FTP completo — incluye credenciales, OS, versión, descarga,
+        # selección de puerto e instalación. El puerto queda guardado en $puertoFtp
+        # vía la variable de retorno para usarlo en firewall e index.
+        $puertoFtp = 0
+        $versionFtp = ""
+        if (-not (ftp_src_flujo_completo $servicio ([ref]$versionFtp))) {
+            msg_error "Instalación desde FTP fallida"
+            msg_pause; return
+        }
+        # Recuperar el puerto que ftp_src_flujo_completo aplicó
+        $puertoFtp = $script:FTP_SRC_LAST_PORT
+        if (-not (http_validar_puerto "$puertoFtp")) { return }
+
+        _http_configurar_firewall_inicial $servicio $puertoFtp
+        http_crear_index $servicio $versionFtp $puertoFtp
+        http_draw_resumen $servicio "$puertoFtp" $versionFtp
+
+        $sslLibFtp = Join-Path $PSScriptRoot "..\ssl_lib\ssl.ps1"
+        if (Test-Path $sslLibFtp) {
+            Write-Host ""; Write-Separator
+            msg_input "¿Desea activar SSL/TLS en ${servicio}? [S/N]: "
+            $sslRespFtp = Read-Host
+            if ($sslRespFtp -match '^[SsYy]') {
+                . $sslLibFtp
+                switch ($servicio) {
+                    "iis"    { ssl_configurar_iis    }
+                    "apache" { ssl_configurar_apache }
+                    "nginx"  { ssl_configurar_nginx  }
+                    "tomcat" { ssl_configurar_tomcat }
+                }
+            }
+        }
+        Write-Host ""; msg_pause; return
+    }
 
     # ── Paso 2: Consultar versiones ──────────────────────────────────────────
     $versiones = http_consultar_versiones $servicio
@@ -1496,10 +1632,52 @@ function http_menu_instalar {
 
     # ── Paso 5: Ejecutar la instalación ─────────────────────────────────────
     switch ($servicio) {
-        "iis" { http_instalar_iis    $version $puerto }
+        "iis"    { http_instalar_iis    $version $puerto }
         "apache" { http_instalar_apache $version $puerto }
-        "nginx" { http_instalar_nginx  $version $puerto }
+        "nginx"  { http_instalar_nginx  $version $puerto }
         "tomcat" { http_instalar_tomcat $version $puerto }
+    }
+
+    # ── Hook SSL ──────────────────────────────────────────────────────────────
+    # Ofrecer SSL después de cada instalación exitosa
+    $sslLibPath = Join-Path $PSScriptRoot "..\ssl_lib\ssl.ps1"
+    if (Test-Path $sslLibPath) {
+        Write-Host ""
+        Write-Separator
+        msg_input "¿Desea activar SSL/TLS en ${servicio}? [S/N]: "
+        $sslResp = Read-Host
+        if ($sslResp -match '^[SsYy]') {
+            . $sslLibPath
+            switch ($servicio) {
+                "iis"    { ssl_configurar_iis    }
+                "apache" { ssl_configurar_apache }
+                "nginx"  { ssl_configurar_nginx  }
+                "tomcat" { ssl_configurar_tomcat }
+            }
+            # Actualizar index.html con ambos puertos si SSL se configuro
+            # Leer los puertos exportados por ssl_configurar_* 
+            $httpsLast = $script:_SSL_LAST_HTTPS_PORT
+            $httpLast  = $script:_SSL_LAST_HTTP_PORT
+            msg_info "Puertos SSL exportados: HTTP=$httpLast HTTPS=$httpsLast"
+            if ($httpsLast -gt 0 -and $httpLast -gt 0) {
+                $verIdx = if ($servicio -ne "iis") {
+                    $pkgName = http_nombre_paquete $servicio
+                    $verLine = choco list --local-only $pkgName 2>$null |
+                        Where-Object { $_ -match "^$pkgName\s" } |
+                        Select-Object -First 1
+                    if ($verLine) { ($verLine -split "\s+")[1] } else { "instalado" }
+                } else { "sistema" }
+                http_crear_index $servicio $verIdx ([int]$httpLast) ([int]$httpsLast)
+                msg_success "index.html actualizado con puertos HTTP=${httpLast} HTTPS=${httpsLast}"
+                $script:_SSL_LAST_HTTP_PORT  = 0
+                $script:_SSL_LAST_HTTPS_PORT = 0
+            } else {
+                msg_alert "No se detectaron puertos SSL exportados — index.html sin HTTPS"
+                msg_info  "Verifique que ssl_configurar_* completó sin errores"
+            }
+        } else {
+            msg_info "SSL omitido — puede activarlo desde ssl_manager.ps1"
+        }
     }
 
     Write-Host ""

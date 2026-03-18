@@ -155,50 +155,144 @@ function http_cambiar_puerto {
 
     http_draw_servicio_header $servicio "Cambio de Puerto"
 
-    # Paso 2: Puerto actual
+    # ── Detectar si SSL está activo ───────────────────────────────────────────
+    # Detección directa sin ssl_lib — lee archivos de config
+    $sslActivo = $false
+    switch ($servicio) {
+        "iis" {
+            Import-Module WebAdministration -ErrorAction SilentlyContinue
+            $sslActivo = $null -ne (Get-WebBinding "Default Web Site" -Protocol "https" `
+                         -ErrorAction SilentlyContinue | Select-Object -First 1)
+        }
+        "apache" {
+            $confDir = Split-Path $Script:HTTP_CONF_APACHE -ErrorAction SilentlyContinue
+            if ($confDir) {
+                $sslActivo = Test-Path (Join-Path $confDir "extra\ssl-reprobados.conf")
+            }
+        }
+        "nginx" {
+            if (Test-Path $Script:HTTP_CONF_NGINX) {
+                $sslActivo = [bool](Select-String -Path $Script:HTTP_CONF_NGINX `
+                             -Pattern "ssl_manager: SSL block" -Quiet -ErrorAction SilentlyContinue)
+            }
+        }
+        "tomcat" {
+            if (Test-Path $Script:HTTP_CONF_TOMCAT) {
+                [xml]$_xmlTomcat = Get-Content $Script:HTTP_CONF_TOMCAT -ErrorAction SilentlyContinue
+                if ($_xmlTomcat) {
+                    $sslActivo = $null -ne ($_xmlTomcat.Server.Service.Connector |
+                                 Where-Object { $_.SSLEnabled -eq "true" } |
+                                 Select-Object -First 1)
+                }
+            }
+        }
+    }
+
+    # ── Leer puertos actuales ─────────────────────────────────────────────────
     $puertoActual = _http_leer_puerto_config $servicio
     if ([string]::IsNullOrEmpty($puertoActual)) {
-        msg_alert "No se pudo detectar el puerto actual automaticamente"
         $puertoActual = switch ($servicio) {
-            "iis" { "$($Script:HTTP_PUERTO_DEFAULT_IIS)" }
+            "iis"    { "$($Script:HTTP_PUERTO_DEFAULT_IIS)"    }
             "apache" { "$($Script:HTTP_PUERTO_DEFAULT_APACHE)" }
-            "nginx" { "$($Script:HTTP_PUERTO_DEFAULT_NGINX)" }
+            "nginx"  { "$($Script:HTTP_PUERTO_DEFAULT_NGINX)"  }
             "tomcat" { "$($Script:HTTP_PUERTO_DEFAULT_TOMCAT)" }
         }
-        msg_info "Usando puerto por defecto: ${puertoActual}"
     }
-    else {
-        msg_info "Puerto actual configurado: ${puertoActual}/tcp"
+
+    $puertoHttpsActual = ""
+    if ($sslActivo) {
+        $puertoHttpsActual = switch ($servicio) {
+            "iis" {
+                Import-Module WebAdministration -ErrorAction SilentlyContinue
+                $b = Get-WebBinding "Default Web Site" -Protocol "https" `
+                     -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($b) { ($b.bindingInformation -split ':')[1] } else { "443" }
+            }
+            "apache" {
+                $confDir = Split-Path $Script:HTTP_CONF_APACHE
+                $sslConf = Join-Path $confDir "extra\ssl-reprobados.conf"
+                if (Test-Path $sslConf) {
+                    $l = Get-Content $sslConf | Where-Object { $_ -match '^\s*Listen\s+\d+' } | Select-Object -First 1
+                    if ($l) { ($l -replace '.*Listen\s+', '').Trim() } else { "443" }
+                } else { "443" }
+            }
+            "nginx" {
+                $marca = "# === ssl_manager: SSL block ==="
+                $lines = Get-Content $Script:HTTP_CONF_NGINX -ErrorAction SilentlyContinue
+                $enBloque = $false
+                $p = "443"
+                foreach ($l in $lines) {
+                    if ($l -match [regex]::Escape($marca)) { $enBloque = $true; continue }
+                    if ($enBloque -and $l -match 'listen\s+(\d+)\s+ssl') { $p = $Matches[1]; break }
+                }
+                $p
+            }
+            "tomcat" {
+                if (Test-Path $Script:HTTP_CONF_TOMCAT) {
+                    [xml]$xml = Get-Content $Script:HTTP_CONF_TOMCAT -ErrorAction SilentlyContinue
+                    $c = $xml.Server.Service.Connector | Where-Object { $_.SSLEnabled -eq 'true' } | Select-Object -First 1
+                    if ($c) { $c.port } else { "8443" }
+                } else { "8443" }
+            }
+        }
     }
 
     Write-Host ""
+    msg_info "Puertos actuales:"
+    Write-Host "    HTTP  : ${puertoActual}/tcp"
+    if ($sslActivo) { Write-Host "    HTTPS : ${puertoHttpsActual}/tcp" }
+    Write-Host ""
 
-    # Paso 3: Nuevo puerto
+    # ── Pedir nuevo puerto HTTP ───────────────────────────────────────────────
     $puertoNuevo = ""
     do {
-        msg_input "Nuevo puerto [actual: ${puertoActual}]"
+        msg_input "Nuevo puerto HTTP [actual: ${puertoActual}]: "
         $puertoNuevo = Read-Host
         if ([string]::IsNullOrWhiteSpace($puertoNuevo)) {
-            msg_error "Debe ingresar un numero de puerto"
-            $puertoNuevo = ""
-            Write-Host ""
-        }
-        elseif (-not (http_validar_puerto_cambio $puertoNuevo $puertoActual)) {
-            $puertoNuevo = ""
-            Write-Host ""
+            msg_error "Debe ingresar un numero de puerto"; $puertoNuevo = ""; Write-Host ""
+        } elseif (-not (http_validar_puerto_cambio $puertoNuevo $puertoActual)) {
+            $puertoNuevo = ""; Write-Host ""
         }
     } while ([string]::IsNullOrEmpty($puertoNuevo))
 
+    # ── Pedir nuevo puerto HTTPS si SSL está activo ───────────────────────────
+    $puertoHttpsNuevo = ""
+    if ($sslActivo) {
+        Write-Host ""
+        msg_info "SSL activo — tambien debes cambiar el puerto HTTPS."
+        do {
+            msg_input "Nuevo puerto HTTPS [actual: ${puertoHttpsActual}]: "
+            $puertoHttpsNuevo = Read-Host
+            if ([string]::IsNullOrWhiteSpace($puertoHttpsNuevo)) {
+                msg_error "Debe ingresar un numero de puerto"; $puertoHttpsNuevo = ""; Write-Host ""; continue
+            }
+            if ($puertoHttpsNuevo -eq $puertoNuevo) {
+                msg_error "El puerto HTTPS no puede ser igual al HTTP ($puertoNuevo)"
+                $puertoHttpsNuevo = ""; Write-Host ""; continue
+            }
+            if ($puertoHttpsNuevo -eq $puertoActual) {
+                msg_error "El puerto HTTPS no puede ser igual al HTTP actual ($puertoActual)"
+                $puertoHttpsNuevo = ""; Write-Host ""; continue
+            }
+            if ($puertoHttpsNuevo -eq $puertoHttpsActual) {
+                msg_error "El puerto HTTPS nuevo es igual al actual ($puertoHttpsActual) — ingresa uno diferente"
+                $puertoHttpsNuevo = ""; Write-Host ""; continue
+            }
+            if (-not (http_validar_puerto_cambio $puertoHttpsNuevo $puertoHttpsActual)) {
+                $puertoHttpsNuevo = ""; Write-Host ""
+            }
+        } while ([string]::IsNullOrEmpty($puertoHttpsNuevo))
+    }
+
     Write-Host ""
-    msg_alert "Se modificara la configuracion de ${servicio}:"
-    Write-Host "    Puerto actual : ${puertoActual}/tcp"
-    Write-Host "    Puerto nuevo  : ${puertoNuevo}/tcp"
+    msg_alert "Cambios a aplicar en ${servicio}:"
+    Write-Host "    HTTP  : ${puertoActual} -> ${puertoNuevo}/tcp"
+    if ($sslActivo) { Write-Host "    HTTPS : ${puertoHttpsActual} -> ${puertoHttpsNuevo}/tcp" }
     Write-Host ""
 
-    # Confirmación
     $confirmado = $false
     do {
-        msg_input "Confirmar cambio? [s/n]"
+        msg_input "Confirmar cambio? [s/n]: "
         $resp = Read-Host
         $rc = http_validar_confirmacion $resp
         if ($rc -eq 0) { $confirmado = $true; break }
@@ -209,16 +303,13 @@ function http_cambiar_puerto {
     draw_line
     Write-Host ""
 
-    # Paso 4: Backup
+    # ── PASO 1: Backup ────────────────────────────────────────────────────────
     $confFile = http_get_conf_archivo $servicio
-
-    # Re-detectar ruta real si la ruta guardada no existe
     if ($servicio -eq "apache" -and -not (Test-Path $confFile)) {
         $candidatos = @(
             "$env:APPDATA\Apache24\conf\httpd.conf",
             "$env:APPDATA\Apache2.4\conf\httpd.conf",
-            "C:\Apache24\conf\httpd.conf",
-            "C:\Apache2.4\conf\httpd.conf"
+            "C:\Apache24\conf\httpd.conf", "C:\Apache2.4\conf\httpd.conf"
         )
         foreach ($c in $candidatos) {
             if (Test-Path $c) { $confFile = $c; $Script:HTTP_CONF_APACHE = $c; break }
@@ -231,24 +322,23 @@ function http_cambiar_puerto {
         if (Test-Path $confFile) { msg_info "httpd.conf re-detectado: $confFile" }
     }
 
-    msg_info "PASO 1/5 — Backup de configuracion"
+    msg_info "PASO 1/4 — Backup de configuracion"
     if (-not (http_crear_backup $confFile)) {
-        msg_error "No se pudo crear backup — operacion cancelada por seguridad"
-        return
+        msg_error "No se pudo crear backup — operacion cancelada por seguridad"; return
     }
-
     Write-Host ""
 
-    # Paso 5: Editar el archivo de configuración
-    msg_info "PASO 2/5 — Aplicando nuevo puerto en $confFile"
-
+    # ── PASO 2: Actualizar puerto HTTP en config ──────────────────────────────
+    msg_info "PASO 2/4 — Aplicando nuevo puerto HTTP"
     switch ($servicio) {
         "iis" {
             Import-Module WebAdministration -ErrorAction SilentlyContinue
-            Remove-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue
+            # Solo reemplazar binding HTTP — preservar HTTPS
+            Get-WebBinding -Name "Default Web Site" -Protocol "http" `
+                -ErrorAction SilentlyContinue | Remove-WebBinding -ErrorAction SilentlyContinue
             New-WebBinding -Name "Default Web Site" -Protocol http `
                 -Port ([int]$puertoNuevo) | Out-Null
-            msg_success "Binding IIS actualizado a ${puertoNuevo}/tcp"
+            msg_success "Binding HTTP actualizado a ${puertoNuevo}/tcp"
         }
         "apache" {
             (Get-Content $confFile) -replace 'Listen\s+\d+', "Listen $puertoNuevo" |
@@ -264,63 +354,94 @@ function http_cambiar_puerto {
             [xml]$xml = Get-Content $confFile
             $connector = $null
             foreach ($c in $xml.Server.Service.Connector) {
-                if ($c.protocol -match 'HTTP') { $connector = $c; break }
+                if ($c.protocol -match 'HTTP' -and $c.SSLEnabled -ne 'true') { $connector = $c; break }
             }
             if ($connector) {
                 $connector.SetAttribute("port", $puertoNuevo)
                 $xml.Save($confFile)
                 msg_success "Puerto ${puertoNuevo} configurado en server.xml"
-            }
-            else {
-                msg_error "No se encontro el Connector HTTP en server.xml"
-                return $false
+            } else {
+                msg_error "No se encontro el Connector HTTP en server.xml"; return
             }
         }
     }
-
     Write-Host ""
 
-    # Paso 6: Restart (el socket cambia — reload no es suficiente)
-    msg_info "PASO 3/5 — Reiniciando servicio para aplicar nuevo puerto"
+    # ── PASO 3: Actualizar SSL si activo ──────────────────────────────────────
+    if ($sslActivo -and $puertoHttpsNuevo) {
+        msg_info "PASO 3/4 — Actualizando configuracion SSL"
+        $sslLibPath = Join-Path $PSScriptRoot "..\ssl_lib\ssl.ps1"
+        if (-not (Test-Path $sslLibPath)) {
+            $sslLibPath = Join-Path (Split-Path $PSScriptRoot) "ssl_lib\ssl.ps1"
+        }
+        if (Test-Path $sslLibPath) {
+            . $sslLibPath
+            switch ($servicio) {
+                "iis"    { ssl_iis_actualizar_puertos    ([int]$puertoNuevo) ([int]$puertoHttpsNuevo) }
+                "apache" { ssl_apache_actualizar_puertos ([int]$puertoNuevo) ([int]$puertoHttpsNuevo) }
+                "nginx"  { ssl_nginx_actualizar_puertos  ([int]$puertoNuevo) ([int]$puertoHttpsNuevo) }
+                "tomcat" { ssl_tomcat_actualizar_puertos ([int]$puertoHttpsNuevo) }
+            }
+        } else {
+            msg_error "ssl_lib no encontrado — actualizacion SSL omitida"; return
+        }
+        Write-Host ""
+    } else {
+        msg_info "PASO 3/4 — SSL no activo, omitiendo"
+        Write-Host ""
+    }
+
+    # ── PASO 4: Reiniciar, verificar, firewall, index ─────────────────────────
+    msg_info "PASO 4/4 — Reiniciando servicio"
     if (-not (http_reiniciar_servicio $servicio)) {
-        msg_error "El servicio no levanto — restaurando configuracion anterior"
+        msg_error "El servicio no levanto — restaurando"
         http_restaurar_backup $confFile
         http_reiniciar_servicio $servicio
         return
     }
-    Write-Host ""
+    # IIS necesita más tiempo para cargar bindings HTTPS tras el restart
+    $waitSecs = if ($servicio -eq "iis") { 5 } else { 2 }
+    Start-Sleep -Seconds $waitSecs
 
-    # Paso 7: Verificar respuesta HTTP en el nuevo puerto
-    msg_info "PASO 4/5 — Verificando respuesta HTTP en puerto ${puertoNuevo}"
-    Start-Sleep -Seconds 2
-
-    if (-not (http_verificar_respuesta $servicio ([int]$puertoNuevo))) {
+    # Verificar — con SSL el HTTP devuelve 301, aceptarlo como válido
+    $code = curl.exe -s -o NUL -w "%{http_code}" --max-redirs 0 `
+            "http://localhost:${puertoNuevo}" 2>$null
+    if ($code -match '^(200|301|302)$') {
+        msg_success "Puerto ${puertoNuevo} responde (HTTP $code)"
+    } else {
         msg_error "Sin respuesta en puerto ${puertoNuevo} — restaurando"
         http_restaurar_backup $confFile
         http_reiniciar_servicio $servicio
-        msg_info "Configuracion restaurada al puerto ${puertoActual}"
         return
     }
     Write-Host ""
 
-    # Paso 8: Firewall
-    msg_info "PASO 5/5 — Actualizando reglas de Windows Firewall"
     _http_actualizar_firewall_puerto ([int]$puertoNuevo) ([int]$puertoActual)
+    if ($sslActivo -and $puertoHttpsNuevo) {
+        _http_actualizar_firewall_puerto ([int]$puertoHttpsNuevo) ([int]$puertoHttpsActual)
+    }
     Write-Host ""
 
-    # Paso 9: Actualizar index.html
+    # Actualizar index.html con ambos puertos si SSL está activo
     $verActual = if ($servicio -ne "iis") {
         choco list --local-only (http_nombre_paquete $servicio) 2>$null |
-        Where-Object { $_ -match "^$servicio\s" } |
+        Where-Object { $_ -match "^$(http_nombre_paquete $servicio)\s" } |
         ForEach-Object { ($_ -split '\s+')[1] }
-    }
-    else { "sistema" }
+    } else { "sistema" }
 
-    http_crear_index $servicio $verActual ([int]$puertoNuevo)
+    if ($sslActivo -and $puertoHttpsNuevo) {
+        http_crear_index $servicio $verActual ([int]$puertoNuevo) ([int]$puertoHttpsNuevo)
+    } else {
+        http_crear_index $servicio $verActual ([int]$puertoNuevo)
+    }
 
     Write-Host ""
     draw_line
-    msg_success "Puerto cambiado exitosamente: ${puertoActual} → ${puertoNuevo}"
+    if ($sslActivo) {
+        msg_success "Puertos cambiados — HTTP: ${puertoActual} -> ${puertoNuevo} | HTTPS: ${puertoHttpsActual} -> ${puertoHttpsNuevo}"
+    } else {
+        msg_success "Puerto cambiado exitosamente: ${puertoActual} -> ${puertoNuevo}"
+    }
     draw_line
 }
 
