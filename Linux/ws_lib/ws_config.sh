@@ -339,7 +339,10 @@ http_cambiar_puerto() {
 
     # ── PASO 4: Verificar ─────────────────────────────────────────────────
     msg_info "PASO 4/4 — Verificar respuesta en puerto ${puerto_http_nuevo}"
-    sleep 2
+    # Nginx necesita más tiempo para recargar workers tras un restart con SSL
+    local _wait=2
+    [[ "$servicio" == "nginx" ]] && _wait=4
+    sleep $_wait
 
     local _verify_ok=false
     if $ssl_activo; then

@@ -65,6 +65,34 @@ _http_ssl_hook() {
 # -----------------------------------------------------------------------------
 # http_seleccionar_servicio
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# _http_seleccionar_fuente
+#
+# Pregunta al usuario si desea instalar desde Internet (dnf) o desde el
+# repositorio FTP local. Retorna "internet" o "ftp" en la variable destino.
+# -----------------------------------------------------------------------------
+_http_seleccionar_fuente() {
+    local _var="$1"
+    echo ""
+    separator
+    msg_info "Fuente de instalación"
+    separator
+    echo ""
+    echo -e "  ${BLUE}1)${NC} Internet — repositorio oficial (dnf)"
+    echo -e "  ${BLUE}2)${NC} Repositorio FTP local"
+    echo ""
+    local sel
+    while true; do
+        msg_input "Seleccione fuente [1/2, Enter=1]: "; read -r sel
+        [[ -z "$sel" ]] && sel="1"
+        case "$sel" in
+            1) printf -v "$_var" "internet"; return 0 ;;
+            2) printf -v "$_var" "ftp";      return 0 ;;
+            *) msg_error "Ingrese 1 o 2" ;;
+        esac
+    done
+}
+
 http_seleccionar_servicio() {
     local _var_destino="$1"
 
@@ -269,9 +297,10 @@ http_seleccionar_version() {
 http_seleccionar_puerto() {
     local servicio="$1"
     local _var_puerto="$2"
+    local _paso_label="${3:-Paso 3 de 4}"   # $3 opcional para FTP (Paso 2 de 3, etc.)
 
     clear
-    http_draw_servicio_header "Selector de Puerto — ${servicio}" "Paso 3 de 4"
+    http_draw_servicio_header "Selector de Puerto — ${servicio}" "$_paso_label"
 
     local puerto_default
     case "$servicio" in
@@ -974,6 +1003,11 @@ http_instalar_tomcat() {
 # Hook SSL en el flujo de reconfiguración (caso "reconfigurar:*").
 # -----------------------------------------------------------------------------
 http_menu_instalar() {
+    # Cargar módulo FTP si está disponible
+    local _ftp_src_lib
+    _ftp_src_lib="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/ws_lib/ws_ftp_source.sh"
+    [[ -f "$_ftp_src_lib" ]] && source "$_ftp_src_lib" 2>/dev/null || true
+
     local seleccion_servicio
     http_seleccionar_servicio seleccion_servicio
 
@@ -1029,6 +1063,76 @@ http_menu_instalar() {
             ;;
     esac
 
+    # ── Selección de fuente ANTES de consultar versiones ─────────────
+    # Si se elige FTP, se salta la consulta de versiones a dnf.
+    local _fuente_instalacion="internet"
+    if declare -f ftp_src_flujo_completo &>/dev/null; then
+        _http_seleccionar_fuente _fuente_instalacion
+    fi
+
+    if [[ "$_fuente_instalacion" == "ftp" ]]; then
+        # ── Flujo FTP correcto:
+        #   Paso 2/4: FTP (credenciales, version, descarga, instalacion RPM)
+        #   Paso 3/4: Puerto
+        #   Paso 4/4: Setup, firewall, index, resumen, SSL
+
+        # Paso 2: Todo lo de FTP
+        local _version_ftp
+        if ! ftp_src_flujo_completo "$servicio" _version_ftp; then
+            msg_error "Instalacion desde FTP fallida"
+            echo ""
+            msg_pause
+            return 1
+        fi
+        [[ -z "$_version_ftp" ]] && _version_ftp="desconocida"
+        echo ""
+
+        # Paso 3: Puerto (despues del FTP, no antes)
+        local puerto_elegido
+        http_seleccionar_puerto "$servicio" puerto_elegido "Paso 3 de 4"
+
+        if ! http_validar_puerto "$puerto_elegido"; then
+            msg_error "El puerto $puerto_elegido no está disponible. Instalacion cancelada."
+            return 1
+        fi
+
+        # Paso 4: Setup, habilitar, firewall, index, resumen, SSL
+        case "$servicio" in
+            httpd)
+                _http_setup_apache "$puerto_elegido"
+                _http_configurar_puerto_inicial "httpd" "$puerto_elegido"
+                _http_habilitar_servicio "httpd"
+                _http_configurar_firewall_inicial "httpd" "$puerto_elegido"
+                http_crear_index "httpd" "$_version_ftp" "$puerto_elegido"
+                http_draw_resumen "Apache (httpd)" "$puerto_elegido" "$_version_ftp"
+                _http_ssl_hook "httpd" "post_install"
+                ;;
+            nginx)
+                _http_setup_nginx "$puerto_elegido"
+                _http_configurar_puerto_inicial "nginx" "$puerto_elegido"
+                _http_habilitar_servicio "nginx"
+                _http_configurar_firewall_inicial "nginx" "$puerto_elegido"
+                http_crear_index "nginx" "$_version_ftp" "$puerto_elegido"
+                http_draw_resumen "Nginx" "$puerto_elegido" "$_version_ftp"
+                _http_ssl_hook "nginx" "post_install"
+                ;;
+            tomcat)
+                _http_setup_tomcat "$puerto_elegido"
+                _http_configurar_puerto_inicial "tomcat" "$puerto_elegido"
+                _http_habilitar_servicio "tomcat"
+                _http_configurar_firewall_inicial "tomcat" "$puerto_elegido"
+                http_crear_index "tomcat" "$_version_ftp" "$puerto_elegido"
+                http_draw_resumen "Tomcat" "$puerto_elegido" "$_version_ftp"
+                _http_ssl_hook "tomcat" "post_install"
+                ;;
+        esac
+
+        echo ""
+        msg_pause
+        return 0
+    fi
+
+    # ── Flujo Internet (dnf) ──────────────────────────────────────────
     echo ""
     msg_pause
 
@@ -1086,6 +1190,7 @@ http_menu_instalar() {
     separator
     echo ""
 
+    # ── Instalación normal desde Internet (dnf) ───────────────────────
     case "$servicio" in
         httpd)  http_instalar_apache "$version_elegida" "$puerto_elegido" ;;
         nginx)  http_instalar_nginx  "$version_elegida" "$puerto_elegido" ;;
@@ -1100,6 +1205,7 @@ http_menu_instalar() {
 # Exports
 # -----------------------------------------------------------------------------
 export -f _http_ssl_hook
+export -f _http_seleccionar_fuente
 export -f http_seleccionar_servicio
 export -f http_consultar_versiones
 export -f http_seleccionar_version
