@@ -63,6 +63,11 @@ source "${SCRIPT_DIR}/ws_lib/ws_config.sh"
 source "${SCRIPT_DIR}/ws_lib/ws_versions.sh"
 source "${SCRIPT_DIR}/ws_lib/ws_monitor.sh"
 
+# ws_ftp_source carga bajo demanda desde http_menu_instalar
+# pero si existe lo precargamos para validar su sintaxis al inicio
+[[ -f "${SCRIPT_DIR}/ws_lib/ws_ftp_source.sh" ]] && \
+    source "${SCRIPT_DIR}/ws_lib/ws_ftp_source.sh" 2>/dev/null || true
+
 # -----------------------------------------------------------------------------
 # Solo verificar dependencias si se pidió
 # -----------------------------------------------------------------------------
