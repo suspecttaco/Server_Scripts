@@ -55,6 +55,12 @@ _ssl_apache_escribir_conf() {
     local key_path="${SSL_DIR_APACHE}/${SSL_KEY_FILE}"
     local server_name="${SSL_CERT_CN}"
     local webroot="${HTTP_WEBROOT_APACHE:-/var/www/html}"
+    # Obtener todas las IPs del servidor para ServerName del VirtualHost HTTP
+    # Igual que Nginx: Apache hace match por ServerName y %{SERVER_ADDR}
+    # devuelve la IP correcta del socket
+    local server_ips
+    server_ips=$(hostname -I 2>/dev/null | tr " " "\n" | grep -v "^$" | tr "\n" " " | xargs)
+    [[ -z "$server_ips" ]] && server_ips="$server_name"
 
     msg_process "Escribiendo ${_SSL_APACHE_CONF}..."
 
@@ -99,13 +105,16 @@ Listen ${https_port}
 </VirtualHost>
 
 # ── Redirect HTTP → HTTPS ────────────────────────────────────────────────────
-# Usar %{SERVER_NAME} para el host limpio (sin puerto) y añadir el puerto
-# HTTPS explícito. %{HTTP_HOST} puede incluir el puerto del cliente y
-# produciría host:80:443 como destino.
+# ServerName con todas las IPs del servidor para capturar peticiones
+# desde cualquier adaptador. %{HTTP_HOST} devuelve host:puerto del cliente,
+# usamos el header directamente y eliminamos el puerto con regex.
 <VirtualHost *:${http_port}>
     ServerName ${server_name}
+    ServerAlias ${server_ips}
     RewriteEngine On
-    RewriteRule ^(.*)$ https://%{SERVER_NAME}:${https_port}\$1 [R=301,L]
+    # %{HTTP_HOST} = host:puerto o solo host — eliminar puerto si existe
+    RewriteCond %{HTTP_HOST} ^([^:]+)(:[0-9]+)?$
+    RewriteRule ^(.*)$ https://%1:${https_port}\$1 [R=301,L]
 </VirtualHost>
 APACHESSL
 
@@ -170,7 +179,7 @@ ssl_apache_actualizar_puertos() {
         return 1
     fi
 
-    sudo systemctl restart httpd 2>/dev/null
+    # NO reiniciar aquí — ws_config.sh hace el restart único en PASO 4
     _ssl_apache_abrir_firewall "$https_port"
     msg_success "Puertos Apache SSL actualizados: HTTP=${http_port} HTTPS=${https_port}"
     return 0

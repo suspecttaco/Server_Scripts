@@ -99,10 +99,9 @@ _ssl_nginx_registrar_selinux() {
 #
 # Modifica nginx.conf via python3. Idempotente.
 #
-# El redirect usa https://$host:HTTPS_PORT$request_uri
-# $host es la variable Nginx que contiene el header Host: del cliente,
-# sin el puerto. Funciona correctamente con cualquier número de interfaces
-# de red — NAT, Host-Only, etc.
+# Redirect: usa $host (header Host: del cliente sin puerto).
+# El server block HTTP usa server_name con todas las IPs del servidor
+# para que Nginx capture la petición independientemente del adaptador.
 # -----------------------------------------------------------------------------
 _ssl_nginx_aplicar_python() {
     local http_port="$1"
@@ -112,6 +111,10 @@ _ssl_nginx_aplicar_python() {
     local server_name="$5"
     local webroot="$6"
     local marca="$7"
+    # Obtener todas las IPs del servidor para server_name del bloque HTTP
+    local server_ips
+    server_ips=$(hostname -I 2>/dev/null | tr " " "\n" | grep -v "^$" | tr "\n" " " | xargs)
+    [[ -z "$server_ips" ]] && server_ips="localhost"
 
     local ts; ts=$(date +%Y%m%d_%H%M%S)
     sudo cp "$_SSL_NGINX_CONF" "${_SSL_NGINX_CONF}.bak_${ts}"
@@ -124,7 +127,7 @@ _ssl_nginx_aplicar_python() {
     python3 - "$tmpconf" \
               "$http_port" "$https_port" \
               "$cert_path" "$key_path" \
-              "$server_name" "$webroot" "$marca" << 'PYEOF'
+              "$server_name" "$webroot" "$marca" "$server_ips" << 'PYEOF'
 import sys, re
 
 conf_file   = sys.argv[1]
@@ -135,6 +138,7 @@ key_path    = sys.argv[5]
 server_name = sys.argv[6]
 webroot     = sys.argv[7]
 marca       = sys.argv[8]
+server_ips  = sys.argv[9]  # IPs del servidor separadas por espacio
 
 with open(conf_file) as f:
     content = f.read()
@@ -174,11 +178,13 @@ def remove_redirect_from_server(text, port):
 content = remove_redirect_from_server(content, http_port)
 
 # 3. Agregar return 301 en el server block HTTP existente
-# Usar $host (variable Nginx) — refleja el header Host: del cliente,
-# funciona con cualquier IP/interfaz sin hardcodear nada.
+# $server_addr = IP local del servidor en la que llegó la conexión.
+# Es la variable correcta cuando se accede desde fuera por IP:
+# - No incluye el puerto (a diferencia de $http_host)
+# - Siempre refleja la IP real del adaptador, no _ ni el CN
 redirect_line = f'        return 301 https://$host:{https_port}$request_uri;'
 
-def add_redirect_to_server(text, port, redirect):
+def add_redirect_to_server(text, port, redirect, ips):
     result = []
     i = 0
     modified = False
@@ -197,6 +203,10 @@ def add_redirect_to_server(text, port, redirect):
             i += 1
         block = text[start:i-1]
         if re.search(r'listen\s+' + re.escape(port) + r'[;\s]', block) and not modified:
+            # Reemplazar server_name _ por todas las IPs del servidor
+            # $host con server_name _ devuelve "_" — con IPs reales devuelve
+            # el hostname/IP que el cliente uso para conectarse
+            block = re.sub(r'server_name\s+[^;]+;', f'server_name {ips};', block)
             loc = re.search(r'\blocation\s*[/\w]', block)
             if loc:
                 block = block[:loc.start()] + redirect + '\n\n        ' + block[loc.start():]
@@ -208,7 +218,7 @@ def add_redirect_to_server(text, port, redirect):
         print(f'WARN: no se encontro server block con listen {port}')
     return ''.join(result)
 
-content = add_redirect_to_server(content, http_port, redirect_line)
+content = add_redirect_to_server(content, http_port, redirect_line, server_ips)
 
 # 4. Bloque HTTPS
 ssl_block = f"""
@@ -342,7 +352,7 @@ ssl_nginx_actualizar_puertos() {
         return 1
     fi
 
-    sudo systemctl restart nginx 2>/dev/null
+    # NO reiniciar aquí — ws_config.sh hace el restart único en PASO 4
     _ssl_nginx_abrir_firewall "$https_port"
     msg_success "Puertos Nginx SSL actualizados: HTTP=${http_port} HTTPS=${https_port}"
     return 0

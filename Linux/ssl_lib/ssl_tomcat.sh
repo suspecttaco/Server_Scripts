@@ -323,7 +323,7 @@ ssl_tomcat_actualizar_puertos() {
 
     _ssl_tomcat_modificar_server_xml "$https_port" "$pass" || return 1
     _ssl_tomcat_abrir_firewall "$https_port"
-    _ssl_tomcat_reiniciar_esperar "$https_port"
+    # NO reiniciar aquí — ws_config.sh hace el restart único en PASO 4
 
     msg_success "Puerto HTTPS Tomcat actualizado: ${https_port}/tcp"
     return 0
