@@ -54,6 +54,9 @@ if ($Debug) { Set-PSDebug -Trace 1 }
 . (Join-Path $_scriptDir "ws_lib\ws_versions.ps1")
 . (Join-Path $_scriptDir "ws_lib\ws_monitor.ps1")
 
+# ssl_lib/ — SSL/TLS management (requerido por ws_config para ssl_esta_activo)
+. (Join-Path $_scriptDir "ssl_lib\ssl.ps1")
+
 # -----------------------------------------------------------------------------
 # Solo verificar dependencias si se pidio
 # -----------------------------------------------------------------------------
@@ -97,8 +100,9 @@ function main_menu {
         Write-Host "  3) Configurar / Seguridad"
         Write-Host "  4) Monitoreo"
         Write-Host "  5) Gestionar versiones (upgrade / downgrade)"
-        Write-Host "  6) Verificar dependencias del sistema"
-        Write-Host "  7) Salir"
+        Write-Host "  6) SSL/TLS (Certificados y HTTPS)"
+        Write-Host "  7) Verificar dependencias del sistema"
+        Write-Host "  8) Salir"
         Write-Host ""
         if ($Debug) { Write-Host "  [DEBUG ACTIVO]" -ForegroundColor Yellow }
         Write-Host ""
@@ -113,13 +117,22 @@ function main_menu {
             "4" { http_menu_monitoreo }
             "5" { http_menu_versiones }
             "6" {
+                $sslMgr = Join-Path $_scriptDir "ssl_manager.ps1"
+                if (Test-Path $sslMgr) {
+                    & powershell -ExecutionPolicy Bypass -File $sslMgr
+                } else {
+                    msg_error "ssl_manager.ps1 no encontrado en: $sslMgr"
+                    msg_pause
+                }
+            }
+            "7" {
                 draw_header "Verificacion de dependencias"
                 Write-Host ""
                 http_verificar_dependencias
                 Write-Host ""
                 msg_pause
             }
-            "7" {
+            "8" {
                 Write-Host ""
                 msg_info "Hasta luego."
                 Write-Host ""
