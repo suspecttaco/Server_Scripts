@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ac_lib/ac_applocker.ps1 — Gestion de reglas AppLocker por grupo
+# ac_lib/ac_applocker.ps1 - Gestion de reglas AppLocker por grupo
 # Uso: . .\ac_lib\ac_applocker.ps1
 # Requiere: lib/ui.ps1, lib/input.ps1, ac_lib/ac_log.ps1, ac_lib/ac_ad.ps1
 # =============================================================================
@@ -8,19 +8,19 @@
 #Requires -Module GroupPolicy
 
 # -----------------------------------------------------------------------------
-# NOTAS TECNICAS — AppLocker
+# NOTAS TECNICAS - AppLocker
 # -----------------------------------------------------------------------------
 # AppLocker opera sobre 5 colecciones de reglas:
-#   Exe      — Archivos ejecutables (.exe, .com)
-#   Script   — Scripts (.ps1, .bat, .cmd, .vbs, .js)
-#   Msi      — Instaladores (.msi, .msp, .mst)
-#   Dll      — Librerias (.dll, .ocx) — IMPACTO EN RENDIMIENTO
-#   Appx     — Aplicaciones empaquetadas (Windows Store)
+#   Exe      - Archivos ejecutables (.exe, .com)
+#   Script   - Scripts (.ps1, .bat, .cmd, .vbs, .js)
+#   Msi      - Instaladores (.msi, .msp, .mst)
+#   Dll      - Librerias (.dll, .ocx) - IMPACTO EN RENDIMIENTO
+#   Appx     - Aplicaciones empaquetadas (Windows Store)
 #
 # Tipos de regla:
-#   Publisher — Basada en firma digital del ejecutable
-#   Path      — Basada en ruta del archivo o directorio
-#   Hash      — Basada en SHA256 del binario (resistente a renombrado/movimiento)
+#   Publisher - Basada en firma digital del ejecutable
+#   Path      - Basada en ruta del archivo o directorio
+#   Hash      - Basada en SHA256 del binario (resistente a renombrado/movimiento)
 #
 # El servicio Application Identity (AppIdSvc) DEBE estar corriendo.
 # Sin el, AppLocker no aplica ninguna regla.
@@ -85,7 +85,7 @@ function Enable-AppLockerService {
     }
 
     try {
-        # sc.exe en lugar de Set-Service — evita "Acceso denegado" en DC
+        # sc.exe en lugar de Set-Service - evita "Acceso denegado" en DC
         $cfgResult = sc.exe config AppIDSvc start= auto 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Log WARN "sc.exe config retorno: $cfgResult"
@@ -187,7 +187,7 @@ function Write-AppLockerXmlToSysvol {
         $XmlContent | Out-File -FilePath $xmlPath -Encoding UTF8 -Force -ErrorAction Stop
         Write-Log SUCCESS "XML AppLocker escrito en SYSVOL (Machine): $xmlPath"
 
-        # Escribir tambien en la ruta User — AppLocker con ComputerSettingsDisabled
+        # Escribir tambien en la ruta User - AppLocker con ComputerSettingsDisabled
         # busca el XML en ambas ubicaciones segun el build del cliente.
         $sysvolUser = "\\$DomainName\SYSVOL\$DomainName\Policies\{$GpoId}\User\Microsoft\Windows NT\AppLocker"
         if (-not (Test-Path $sysvolUser)) {
@@ -224,7 +224,7 @@ function Write-AppLockerXmlToSysvol {
                 Write-Log INFO "GPT.INI version: $currentVer -> $newVer (user=$userVer computer=$computerVer)"
             }
         } else {
-            # GPT.INI no existe — crearlo
+            # GPT.INI no existe - crearlo
             $newVer = 65537  # 0x00010001: user=1, computer=1
             "[General]`r`nVersion=$newVer`r`ndisplayName=New Group Policy Object`r`n" |
                 Out-File $gptPath -Encoding ASCII -Force
@@ -269,7 +269,7 @@ function New-AppIDSvcGPO {
         $domainDN = "DC=$($DomainName.Replace('.', ',DC='))"
         New-GPLink -Name $gpoName -Target $domainDN -LinkEnabled Yes -ErrorAction Stop | Out-Null
 
-        Write-Log SUCCESS "GPO '$gpoName' creada y vinculada al dominio — AppIDSvc automatico en clientes."
+        Write-Log SUCCESS "GPO '$gpoName' creada y vinculada al dominio - AppIDSvc automatico en clientes."
         return $true
     } catch {
         Write-Log WARN "No se pudo crear GPO AppIDSvc: $_"
@@ -659,7 +659,7 @@ function Build-AppLockerPolicyXML {
 # deshabilita la configuracion de equipo (ComputerSettingsDisabled) y
 # vincula la GPO a la OU destino.
 #
-# CRITICO — tres pasos obligatorios:
+# CRITICO - tres pasos obligatorios:
 # 1. ComputerSettingsDisabled: evita que la GPO aplique a equipos y bloquee
 #    procesos del sistema (dwm.exe) causando pantalla negra.
 # 2. Write-AppLockerXmlToSysvol: Set-AppLockerPolicy -Ldap no escribe en
@@ -712,7 +712,7 @@ function Apply-AppLockerPolicyGPO {
         }
     }
 
-    # CRITICO: AllSettingsEnabled — AppLocker SOLO funciona via Computer Configuration.
+    # CRITICO: AllSettingsEnabled - AppLocker SOLO funciona via Computer Configuration.
     # ComputerSettingsDisabled hace que Get-AppLockerPolicy -Effective devuelva vacio
     # aunque la GPO llegue al cliente. La proteccion de dwm.exe se logra con
     # reglas Allow explicitas en el XML, no deshabilitando Computer Settings.
@@ -739,7 +739,7 @@ function Apply-AppLockerPolicyGPO {
         }
     }
 
-    # Aplicar via LDAP (complementario al SYSVOL — puede fallar silenciosamente en Server 2022)
+    # Aplicar via LDAP (complementario al SYSVOL - puede fallar silenciosamente en Server 2022)
     try {
         $ldapPath = "LDAP://$((Get-ADDomain -ErrorAction Stop).PDCEmulator)/$($gpo.Path)"
         Set-AppLockerPolicy `
@@ -767,7 +767,7 @@ function Apply-AppLockerPolicyGPO {
         Write-Log WARN "No se pudo sincronizar version AD: $_"
     }
 
-    # Vincular GPO — verificar primero con Get-GPInheritance
+    # Vincular GPO - verificar primero con Get-GPInheritance
     $alreadyLinked = $false
     try {
         $links = Get-GPInheritance -Target $OuDN -ErrorAction SilentlyContinue |
@@ -840,7 +840,7 @@ function Invoke-AppLockerRuleWizard {
     if ($ruleName -eq $false) { return $false }
 
     # ── Accion ────────────────────────────────────────────────────────────────
-    $actionOpts = @('Allow — Permitir ejecucion', 'Deny  — Bloquear ejecucion')
+    $actionOpts = @('Allow - Permitir ejecucion', 'Deny  - Bloquear ejecucion')
     $actionSel  = if ($DefaultAction -eq 'Allow') {
         [PSCustomObject]@{ Index = 0; Value = $actionOpts[0] }
     } elseif ($DefaultAction -eq 'Deny') {
@@ -853,13 +853,13 @@ function Invoke-AppLockerRuleWizard {
 
     # ── Tipo de regla ─────────────────────────────────────────────────────────
     $typeOpts = @(
-        "Hash      — SHA256 del binario (resistente a renombrado)",
-        "Path      — Ruta del archivo o directorio",
-        "Publisher — Firma digital del ejecutable"
+        "Hash      - SHA256 del binario (resistente a renombrado)",
+        "Path      - Ruta del archivo o directorio",
+        "Publisher - Firma digital del ejecutable"
     )
 
     if ($action -eq 'Deny') {
-        msg_alert "NOTA: Para bloqueos se recomienda Hash — impide evasion por renombrado."
+        msg_alert "NOTA: Para bloqueos se recomienda Hash - impide evasion por renombrado."
     }
 
     $typeIdx = switch ($DefaultRuleType) {
@@ -936,11 +936,11 @@ function Invoke-AppLockerRuleWizard {
     $collSel = Read-Selection `
         -Prompt  "Coleccion de reglas AppLocker" `
         -Options @(
-            "Exe   — Ejecutables (.exe, .com)  [RECOMENDADO]",
-            "Script — Scripts (.ps1, .bat, .cmd, .vbs)",
-            "Msi   — Instaladores (.msi, .msp)",
-            "Dll   — Librerias (.dll)  [IMPACTO EN RENDIMIENTO]",
-            "Appx  — Apps de Windows Store"
+            "Exe   - Ejecutables (.exe, .com)  [RECOMENDADO]",
+            "Script - Scripts (.ps1, .bat, .cmd, .vbs)",
+            "Msi   - Instaladores (.msi, .msp)",
+            "Dll   - Librerias (.dll)  [IMPACTO EN RENDIMIENTO]",
+            "Appx  - Apps de Windows Store"
         )
     if ($collSel -eq $false) { return $false }
     $collection = $script:AL_COLLECTIONS[$collSel.Index]
@@ -981,10 +981,10 @@ function Invoke-AppLockerRuleWizard {
             $levelSel = Read-Selection `
                 -Prompt  "Nivel de especificidad del publisher" `
                 -Options @(
-                    "Publisher    — Solo el editor (mas permisivo)",
-                    "ProductName  — Editor + producto",
-                    "BinaryName   — Editor + producto + nombre del archivo",
-                    "BinaryVersion — Hasta la version exacta (mas restrictivo)"
+                    "Publisher    - Solo el editor (mas permisivo)",
+                    "ProductName  - Editor + producto",
+                    "BinaryName   - Editor + producto + nombre del archivo",
+                    "BinaryVersion - Hasta la version exacta (mas restrictivo)"
                 )
             $level = switch ($levelSel.Index) {
                 0 { 'Publisher'     }
@@ -1090,7 +1090,7 @@ function Remove-AppLockerGPOsForGroup {
                     $removed++
                     [void]$deletedNames.Add($gName)
                 } catch {
-                    # Ya eliminada en el paso anterior o no existe — ignorar
+                    # Ya eliminada en el paso anterior o no existe - ignorar
                 }
             }
         }
@@ -1155,7 +1155,7 @@ function New-AppLockerXmlCuates {
       Id="fd686d83-a829-4351-8ff4-27c7de5755d2"
       Name="Permitir todo a Cuates"
       Description="Cuates pueden ejecutar cualquier aplicacion incluido notepad"
-      UserOrGroupSid="S-1-1-0"
+      UserOrGroupSid="$sidCuates"
       Action="Allow">
       <Conditions>
         <FilePathCondition Path="*" />
@@ -1173,7 +1173,7 @@ function New-AppLockerXmlCuates {
 # Genera el XML para GRP_NoCuates: bloquea notepad.exe por ruta (Exceptions)
 # Y por hash (cubre renombrado del binario).
 #
-# CRITICO — GpoStatus debe ser AllSettingsEnabled (NO ComputerSettingsDisabled):
+# CRITICO - GpoStatus debe ser AllSettingsEnabled (NO ComputerSettingsDisabled):
 #   AppLocker SOLO funciona via Computer Configuration. Si se deshabilita
 #   Computer Settings, Get-AppLockerPolicy -Effective devuelve vacio aunque
 #   la GPO llegue al cliente (gpresult la muestra pero no se aplica).
@@ -1181,8 +1181,8 @@ function New-AppLockerXmlCuates {
 #   procesos criticos del sistema, no deshabilitando Computer Settings.
 #
 # ESTRATEGIA:
-#   1. FilePathRule Allow con <Exceptions> de ruta — caso normal
-#   2. FileHashRule Deny con hash dinamico — cubre renombrado/copia
+#   1. FilePathRule Allow con <Exceptions> de ruta - caso normal
+#   2. FileHashRule Deny con hash dinamico - cubre renombrado/copia
 #   3. Reglas Allow explicitas para procesos del sistema (dwm, winlogon, etc.)
 #      para evitar pantalla negra con AllSettingsEnabled activo
 # -----------------------------------------------------------------------------
@@ -1236,7 +1236,7 @@ function New-AppLockerXmlNoCuates {
             Write-Log WARN "No se pudo calcular hash de notepad: $_. Se omite FileHashRule."
         }
     } else {
-        Write-Log WARN "NotepadPath no disponible — FileHashRule Deny omitida."
+        Write-Log WARN "NotepadPath no disponible - FileHashRule Deny omitida."
     }
 
     return @"
@@ -1408,8 +1408,8 @@ function Invoke-AppLockerSetup {
     $modeSel = Read-Selection `
         -Prompt "Modo de configuracion" `
         -Options @(
-            "Practica (recomendado) — genera las dos GPOs correctas automaticamente",
-            "Personalizado — wizard regla por regla"
+            "Practica (recomendado) - genera las dos GPOs correctas automaticamente",
+            "Personalizado - wizard regla por regla"
         )
     if ($modeSel -eq $false) { return $false }
 
@@ -1427,7 +1427,7 @@ function Invoke-AppLockerSetup {
 #   GPO NoCuates -> OU=NoCuates -> Enabled, notepad bloqueado por FilePathRule+Exceptions
 # -----------------------------------------------------------------------------
 function Invoke-AppLockerPractica {
-    Write-LogSection "AppLocker — Modo Practica"
+    Write-LogSection "AppLocker - Modo Practica"
 
     if (-not $script:AD_DOMAIN -or -not $script:AD_DOMAIN_DN) {
         Write-Log ERROR "No hay conexion al dominio."
@@ -1527,7 +1527,7 @@ function Invoke-AppLockerPractica {
     if ($notepadPathForHash) {
         msg_success "Hash de notepad.exe se incluira en la politica (cubre renombrado)."
     } else {
-        msg_alert "notepad.exe no localizado — la politica solo bloqueara por ruta, no por hash."
+        msg_alert "notepad.exe no localizado - la politica solo bloqueara por ruta, no por hash."
     }
 
     $xmlNoCuates = New-AppLockerXmlNoCuates `
@@ -1571,7 +1571,7 @@ function Invoke-AppLockerPractica {
 # Conservado del flujo original para casos fuera de la practica.
 # -----------------------------------------------------------------------------
 function Invoke-AppLockerPersonalizado {
-    Write-LogSection "AppLocker — Modo Personalizado"
+    Write-LogSection "AppLocker - Modo Personalizado"
 
     $gpoName = Read-InputLoop `
         -Prompt    "Nombre de la GPO de AppLocker" `
@@ -1584,9 +1584,9 @@ function Invoke-AppLockerPersonalizado {
 
     Write-Host ""
     msg_info "Configuracion del modo de enforcement por coleccion"
-    msg_info "  AuditOnly      — Solo registra en el log, NO bloquea"
-    msg_info "  Enabled        — Aplica las reglas y bloquea"
-    msg_info "  NotConfigured  — La coleccion no se gestiona"
+    msg_info "  AuditOnly      - Solo registra en el log, NO bloquea"
+    msg_info "  Enabled        - Aplica las reglas y bloquea"
+    msg_info "  NotConfigured  - La coleccion no se gestiona"
     Write-Host ""
 
     $collections = [ordered]@{}
@@ -1653,7 +1653,7 @@ function Invoke-AppLockerPersonalizado {
 function Invoke-AppLockerMenu {
     while ($true) {
         Write-Host ""
-        draw_header "Control de Ejecucion — AppLocker"
+        draw_header "Control de Ejecucion - AppLocker"
 
         $sel = Read-Selection `
             -Prompt "Selecciona una opcion" `
@@ -1698,9 +1698,7 @@ function Invoke-AppLockerMenu {
                             $coll = $_
                             msg_info "Coleccion: $($coll.RuleCollectionType)  [$($coll.EnforcementMode)]"
                             $coll | ForEach-Object {
-                                $_.Rules | ForEach-Object {
-                                    msg_info "  [$($_.Action)] $($_.Name) -> $($_.UserOrGroupSid)"
-                                }
+                                msg_info "  [$($_.Action)] $($_.Name) -> $($_.UserOrGroupSid)"
                             }
                         }
                         Write-Separator

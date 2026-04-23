@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ac_lib/ac_setup.ps1 — Instalacion de prerequisitos y promocion del DC
+# ac_lib/ac_setup.ps1 - Instalacion de prerequisitos y promocion del DC
 # Uso: . .\ac_lib\ac_setup.ps1
 # Requiere: lib/ui.ps1, lib/input.ps1, ac_lib/ac_log.ps1
 # Se ejecuta ANTES del menu principal en ac_manager.ps1
@@ -46,7 +46,7 @@ function Test-FeatureInstalled {
 # -----------------------------------------------------------------------------
 function Test-IsDomainController {
     try {
-        $role = (Get-WmiObject Win32_ComputerSystem -ErrorAction Stop).DomainRole
+        $role = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).DomainRole
         # DomainRole: 4 = Backup DC, 5 = Primary DC
         return $role -ge 4
     } catch {
@@ -276,7 +276,7 @@ function Install-RequiredFeatures {
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Test-OSCompatibility — Windows Server 2016+ (Build >= 14393)
+# Test-OSCompatibility - Windows Server 2016+ (Build >= 14393)
 # -----------------------------------------------------------------------------
 function Test-OSCompatibility {
     try {
@@ -295,7 +295,7 @@ function Test-OSCompatibility {
 }
 
 # -----------------------------------------------------------------------------
-# Test-ExecutionPolicyOK — RemoteSigned, Unrestricted o Bypass
+# Test-ExecutionPolicyOK - RemoteSigned, Unrestricted o Bypass
 # -----------------------------------------------------------------------------
 function Test-ExecutionPolicyOK {
     $policy  = Get-ExecutionPolicy -Scope Process
@@ -310,7 +310,7 @@ function Test-ExecutionPolicyOK {
 }
 
 # -----------------------------------------------------------------------------
-# Test-StaticIPAssigned — IP estatica detectada en adaptador interno
+# Test-StaticIPAssigned - IP estatica detectada en adaptador interno
 # -----------------------------------------------------------------------------
 function Test-StaticIPAssigned {
     $adapter = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
@@ -336,13 +336,15 @@ function Test-StaticIPAssigned {
 # -----------------------------------------------------------------------------
 # Test-DNSSelfPointingWithFix
 # Verifica que el DNS del adaptador apunte al propio servidor.
-# Si no apunta, lo corrige automaticamente — es la causa #1 de fallos en AD DS.
+# Si no apunta, lo corrige automaticamente - es la causa #1 de fallos en AD DS.
 # -----------------------------------------------------------------------------
 function Test-DNSSelfPointingWithFix {
     $adapter = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
                Where-Object {
                    $_.IPAddress -notlike '127.*' -and
-                   $_.IPAddress -notlike '169.254.*'
+                   $_.IPAddress -notlike '169.254.*' -and
+                   $_.IPAddress -notlike '192.168.211.*' -and
+                   $_.IPAddress -notlike '192.168.227.*'
                } | Select-Object -First 1
 
     if ($null -eq $adapter) {
@@ -395,14 +397,14 @@ function Test-DomainNameFormat {
 
     $parts = $DomainName.Split('.')
     if ($parts.Count -ne 2) {
-        Write-Log ERROR "Formato invalido '$DomainName' — debe tener exactamente un punto (ej: practica.local)"
+        Write-Log ERROR "Formato invalido '$DomainName' - debe tener exactamente un punto (ej: practica.local)"
         return $false
     }
 
     $prefix = $parts[0]; $suffix = $parts[1]
 
     if ($prefix.Length -gt 15) {
-        Write-Log ERROR "Prefijo '$prefix' tiene $($prefix.Length) chars (max 15 — limite NetBIOS)"
+        Write-Log ERROR "Prefijo '$prefix' tiene $($prefix.Length) chars (max 15 - limite NetBIOS)"
         return $false
     }
 
@@ -447,7 +449,7 @@ function Invoke-AllValidations {
     $results['DNS'] = Test-DNSSelfPointingWithFix
 
     Write-Host ""
-    # Solo OS y Policy son criticos de verdad — IP y DNS se autocorrigen
+    # Solo OS y Policy son criticos de verdad - IP y DNS se autocorrigen
     $criticalFailed = (-not $results['OS']) -or (-not $results['Policy'])
 
     foreach ($k in $results.Keys) {
@@ -507,13 +509,13 @@ function Invoke-DCPromotion {
     $deployType = Read-Selection `
         -Prompt "Tipo de deployment" `
         -Options @(
-            "Nuevo bosque (Forest) — Primera instalacion, dominio completamente nuevo",
+            "Nuevo bosque (Forest) - Primera instalacion, dominio completamente nuevo",
             "Nuevo dominio en bosque existente",
             "DC adicional en dominio existente"
         )
     if ($deployType -eq $false) { return $false }
 
-    # ── FQDN del dominio — validado con Test-DomainNameFormat ────────────────
+    # ── FQDN del dominio - validado con Test-DomainNameFormat ────────────────
     $domainFQDN = Read-InputLoop `
         -Prompt    "FQDN del dominio (ej: practica.local)" `
         -Validator { param($v)
@@ -536,7 +538,7 @@ function Invoke-DCPromotion {
     $levelSel = Read-Selection `
         -Prompt "Nivel funcional del dominio" `
         -Options @(
-            "WinThreshold (Windows Server 2016) — RECOMENDADO para FGPP y caracteristicas modernas",
+            "WinThreshold (Windows Server 2016) - RECOMENDADO para FGPP y caracteristicas modernas",
             "Win2012R2 (Windows Server 2012 R2)",
             "Win2012  (Windows Server 2012)",
             "Win2008R2 (Windows Server 2008 R2)"
@@ -578,7 +580,7 @@ function Invoke-DCPromotion {
     Write-Host ""
     msg_info "Contrasena del Modo de Restauracion de Directorio (DSRM)"
     msg_info "Esta contrasena se usa para recuperacion de AD en modo seguro."
-    msg_alert "GUARDA ESTA CONTRASENA EN UN LUGAR SEGURO — no se puede recuperar."
+    msg_alert "GUARDA ESTA CONTRASENA EN UN LUGAR SEGURO - no se puede recuperar."
 
     $dsrmPassword = Read-SecureInput `
         -Prompt    "Contrasena DSRM" `
@@ -839,7 +841,7 @@ function Invoke-Setup {
     $status = Get-SetupStatus
     Show-SetupStatus -Status $status
 
-    # Entorno ya listo — camino rapido
+    # Entorno ya listo - camino rapido
     if ($status.AllCriticalOK) {
         Write-Log SUCCESS "El entorno ya cumple todos los requisitos criticos."
         return $true

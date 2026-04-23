@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ac_lib/ac_ad.ps1 — Gestion de Active Directory: OUs, grupos, usuarios
+# ac_lib/ac_ad.ps1 - Gestion de Active Directory: OUs, grupos, usuarios
 # Uso: . .\ac_lib\ac_ad.ps1
 # Requiere: lib/ui.ps1, lib/utils.ps1, lib/input.ps1, ac_lib/ac_log.ps1
 # =============================================================================
@@ -377,7 +377,7 @@ function Invoke-OUSetup {
                 New-SmbShare -Name "Perfiles`$" -Path $profilesBase -ErrorAction Stop | Out-Null
                 Grant-SmbShareAccess -Name "Perfiles`$" -AccountName "Everyone" `
                     -AccessRight Change -Force -ErrorAction SilentlyContinue | Out-Null
-                Write-Log SUCCESS "Share Perfiles`$ creado (acceso Everyone — fallback)"
+                Write-Log SUCCESS "Share Perfiles`$ creado (acceso Everyone - fallback)"
             } catch {
                 Write-Log WARN "No se pudo crear share Perfiles`$: $_"
             }
@@ -412,6 +412,75 @@ function Invoke-OUSetup {
     msg_info "  Add-DnsServerResourceRecordA -ZoneName '$script:AD_DOMAIN' \\"
     msg_info "    -Name 'LNX-CLIENT01' -IPv4Address '<IP_CLIENTE>' -TimeToLive '01:00:00'"
 
+    # ── Estructura RBAC para Practica 9 ──────────────────────────────────────
+    # Crea OU=Admins y grupos de rol si no existen. Es idempotente.
+    Write-Host ""
+    msg_info "Creando estructura de administracion delegada (RBAC - Practica 9)..."
+    Initialize-RBACStructure | Out-Null
+
+    return $true
+}
+
+
+# -----------------------------------------------------------------------------
+# Initialize-RBACStructure
+# Crea la OU=Admins y los 5 grupos necesarios para el modulo RBAC (Practica 9).
+# Se llama al final de Invoke-OUSetup para que el modulo ac_rbac.ps1 encuentre
+# su estructura ya lista sin pasos manuales adicionales.
+# Idempotente: si la OU o los grupos ya existen los omite sin error.
+#
+# Devuelve: $true si todo quedo creado | $false si algo critico fallo
+# -----------------------------------------------------------------------------
+function Initialize-RBACStructure {
+    if (-not $script:AD_DOMAIN_DN) {
+        Write-Log ERROR "Initialize-RBACStructure: no hay conexion al dominio."
+        return $false
+    }
+
+    Write-Log INFO "Verificando estructura RBAC (OU=Admins + grupos de rol)..."
+
+    # ── OU=Admins ─────────────────────────────────────────────────────────────
+    $adminOUDN = "OU=Admins,$script:AD_DOMAIN_DN"
+    $ouResult = New-ADOU -Name "Admins" -Description "Administradores delegados del dominio" -Protected $true
+    if ($ouResult -eq $false) {
+        Write-Log ERROR "No se pudo crear OU=Admins."
+        return $false
+    }
+    Write-Log SUCCESS "OU=Admins disponible: $adminOUDN"
+
+    # ── GRP_AdminDelegados ────────────────────────────────────────────────────
+    $grpDel = New-ADSecurityGroup `
+        -Name        "GRP_AdminDelegados" `
+        -OuDN        $adminOUDN `
+        -Description "Grupo padre de todos los administradores delegados" `
+        -Scope       "Global"
+    if ($grpDel -eq $false) {
+        Write-Log WARN "No se pudo crear GRP_AdminDelegados (puede ya existir)."
+    }
+
+    # ── Grupos de rol ─────────────────────────────────────────────────────────
+    $roleGroups = @(
+        @{ Name = "GRP_Role_IAMOperator";     Desc = "Rol: gestion de identidad y acceso (Cuates/NoCuates)" }
+        @{ Name = "GRP_Role_StorageOperator"; Desc = "Rol: gestion de cuotas y file screening FSRM"        }
+        @{ Name = "GRP_Role_GPOCompliance";   Desc = "Rol: cumplimiento GPO y FGPP"                        }
+        @{ Name = "GRP_Role_SecurityAuditor"; Desc = "Rol: auditor de seguridad solo lectura"               }
+    )
+
+    $allOK = $true
+    foreach ($rg in $roleGroups) {
+        $result = New-ADSecurityGroup `
+            -Name        $rg.Name `
+            -OuDN        $adminOUDN `
+            -Description $rg.Desc `
+            -Scope       "Global"
+        if ($result -eq $false) {
+            Write-Log WARN "No se pudo crear $($rg.Name) (puede ya existir)."
+        } else {
+            Write-Log SUCCESS "Grupo creado: $($rg.Name)"
+        }
+    }
+
+    msg_success "Estructura RBAC lista: OU=Admins + GRP_AdminDelegados + 4 grupos de rol."
     return $true
 }
 
@@ -479,10 +548,10 @@ function Get-OUSelection {
 # Parametros: hashtable $UserData con las siguientes claves:
 #   FirstName       string  (requerido)
 #   LastName        string  (requerido)
-#   SamAccountName  string  (requerido) — login name
+#   SamAccountName  string  (requerido) - login name
 #   Password        SecureString (requerido)
-#   OuDN            string  (requerido) — DN de la OU destino
-#   Group           string  (opcional) — nombre del grupo al que se agrega
+#   OuDN            string  (requerido) - DN de la OU destino
+#   Group           string  (opcional) - nombre del grupo al que se agrega
 #   Email           string  (opcional)
 #   Description     string  (opcional)
 #   Office          string  (opcional)
@@ -663,7 +732,7 @@ function Invoke-ManualUserCreation {
     $mustChange    = Read-Confirm -Prompt "Forzar cambio de contrasena en primer logon" -Default 'S'
 
     # ── Atributos opcionales ──
-    msg_info "Atributos adicionales (opcionales — Enter para omitir)"
+    msg_info "Atributos adicionales (opcionales - Enter para omitir)"
 
     $email = Read-InputLoop `
         -Prompt "Correo electronico" `

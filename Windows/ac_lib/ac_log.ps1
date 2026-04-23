@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ac_lib/ac_log.ps1 — Logger centralizado con niveles y archivo de salida
+# ac_lib/ac_log.ps1 - Logger centralizado con niveles y archivo de salida
 # Uso: . .\ac_lib\ac_log.ps1   (requiere lib/ui.ps1 cargado antes)
 # =============================================================================
 
@@ -58,7 +58,7 @@ function Initialize-Log {
     try {
         $header = @"
 ================================================================================
-  AC Manager — Sesion de log iniciada
+  AC Manager - Sesion de log iniciada
   Fecha    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
   Usuario  : $env:USERNAME
   Maquina  : $env:COMPUTERNAME
@@ -118,7 +118,7 @@ function Write-Log {
         try {
             Add-Content -Path $script:LOG_PATH -Value $line -Encoding UTF8 -ErrorAction Stop
         } catch {
-            # No fallar silenciosamente — advertir en consola
+            # No fallar silenciosamente - advertir en consola
             Write-Host "[ WARN  ] No se pudo escribir en el log: $_" -ForegroundColor Yellow
         }
     }

@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ac_manager.ps1 — Orquestador principal de AC Manager
+# ac_manager.ps1 - Orquestador principal de AC Manager
 # Uso: .\ac_manager.ps1
 # Ejecutar en: SRV-DC01 (Windows Server 2022) como Administrador
 # =============================================================================
@@ -13,8 +13,8 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # RUTAS BASE
 # -----------------------------------------------------------------------------
-$script:ROOT_PATH   = $PSScriptRoot
-$script:LIB_PATH    = Join-Path $ROOT_PATH 'lib'
+$script:ROOT_PATH = $PSScriptRoot
+$script:LIB_PATH = Join-Path $ROOT_PATH 'lib'
 $script:AC_LIB_PATH = Join-Path $ROOT_PATH 'ac_lib'
 
 # Exportar para uso en scripts de cliente
@@ -23,9 +23,9 @@ $env:AC_LIB_PATH = $script:AC_LIB_PATH
 # -----------------------------------------------------------------------------
 # VERSION
 # -----------------------------------------------------------------------------
-$script:AC_VERSION  = '1.0.0'
-$script:AC_NAME     = 'AC Manager'
-$script:AC_DATE     = '2025-03-20'
+$script:AC_VERSION = '1.0.0'
+$script:AC_NAME = 'AC Manager'
+$script:AC_DATE = '2025-03-20'
 
 # -----------------------------------------------------------------------------
 # CARGA DE MODULOS
@@ -52,23 +52,26 @@ function Import-ACModules {
     )
 
     foreach ($entry in $mods) {
-        $parts    = $entry -split '\|'
-        $path     = $parts[0]
-        $name     = $parts[1]
+        $parts = $entry -split '\|'
+        $path = $parts[0]
+        $name = $parts[1]
         $optional = $parts[2] -eq '1'
 
         if (Test-Path $path) {
             try {
                 . $path
                 Write-Host "  [  OK  ] $name"
-            } catch {
+            }
+            catch {
                 Write-Host "  [  ERR ] $name : $_"
                 if (-not $optional) { $failed += $name }
             }
-        } else {
+        }
+        else {
             if ($optional) {
                 Write-Host "  [  N/D ] $name (no disponible)"
-            } else {
+            }
+            else {
                 Write-Host "  [  --- ] $name : no encontrado en $path"
                 $failed += $name
             }
@@ -84,13 +87,13 @@ function Import-ACModules {
 # -----------------------------------------------------------------------------
 
 function Test-Prerequisites {
-    $results  = [System.Collections.Generic.List[hashtable]]::new()
+    $results = [System.Collections.Generic.List[hashtable]]::new()
     $critical = $false
 
     # ── PowerShell version ────────────────────────────────────────────────────
     $psVer = $PSVersionTable.PSVersion
-    $psOK  = $psVer.Major -ge 5 -and ($psVer.Major -gt 5 -or $psVer.Minor -ge 1)
-    $results.Add(@{ Item = "PowerShell >= 5.1";      OK = $psOK;  Value = "$psVer";          Critical = $true })
+    $psOK = $psVer.Major -ge 5 -and ($psVer.Major -gt 5 -or $psVer.Minor -ge 1)
+    $results.Add(@{ Item = "PowerShell >= 5.1"; OK = $psOK; Value = "$psVer"; Critical = $true })
     if (-not $psOK) { $critical = $true }
 
     # ── Privilegios de administrador ──────────────────────────────────────────
@@ -100,42 +103,43 @@ function Test-Prerequisites {
 
     # ── Modulo Active Directory ───────────────────────────────────────────────
     $adMod = [bool](Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue)
-    $results.Add(@{ Item = "Modulo ActiveDirectory";  OK = $adMod; Value = $(if ($adMod) { 'Disponible' } else { 'No encontrado' }); Critical = $true })
+    $results.Add(@{ Item = "Modulo ActiveDirectory"; OK = $adMod; Value = $(if ($adMod) { 'Disponible' } else { 'No encontrado' }); Critical = $true })
     if (-not $adMod) { $critical = $true }
 
     # ── Modulo GroupPolicy ────────────────────────────────────────────────────
     $gpMod = [bool](Get-Module -ListAvailable -Name GroupPolicy -ErrorAction SilentlyContinue)
-    $results.Add(@{ Item = "Modulo GroupPolicy";       OK = $gpMod; Value = $(if ($gpMod) { 'Disponible' } else { 'No encontrado' }); Critical = $false })
+    $results.Add(@{ Item = "Modulo GroupPolicy"; OK = $gpMod; Value = $(if ($gpMod) { 'Disponible' } else { 'No encontrado' }); Critical = $false })
 
     # ── Servicio AD DS ────────────────────────────────────────────────────────
     $adSvcObj = Get-Service -Name 'NTDS' -ErrorAction SilentlyContinue
-    $adSvc    = ($null -ne $adSvcObj -and $adSvcObj.Status -eq 'Running')
-    $results.Add(@{ Item = "Servicio AD DS (NTDS)";   OK = $adSvc; Value = $(if ($adSvc) { 'Running' } else { 'No activo' }); Critical = $true })
+    $adSvc = ($null -ne $adSvcObj -and $adSvcObj.Status -eq 'Running')
+    $results.Add(@{ Item = "Servicio AD DS (NTDS)"; OK = $adSvc; Value = $(if ($adSvc) { 'Running' } else { 'No activo' }); Critical = $true })
     if (-not $adSvc) { $critical = $true }
 
     # ── Servicio DNS ──────────────────────────────────────────────────────────
     $dnsSvcObj = Get-Service -Name 'DNS' -ErrorAction SilentlyContinue
-    $dnsSvc    = ($null -ne $dnsSvcObj -and $dnsSvcObj.Status -eq 'Running')
-    $results.Add(@{ Item = "Servicio DNS";             OK = $dnsSvc; Value = $(if ($dnsSvc) { 'Running' } else { 'No activo' }); Critical = $false })
+    $dnsSvc = ($null -ne $dnsSvcObj -and $dnsSvcObj.Status -eq 'Running')
+    $results.Add(@{ Item = "Servicio DNS"; OK = $dnsSvc; Value = $(if ($dnsSvc) { 'Running' } else { 'No activo' }); Critical = $false })
 
     # ── FSRM instalado ────────────────────────────────────────────────────────
     $fsrmFeature = Get-WindowsFeature -Name 'FS-Resource-Manager' -ErrorAction SilentlyContinue
-    $fsrm        = ($null -ne $fsrmFeature -and $fsrmFeature.InstallState -eq 'Installed')
-    $results.Add(@{ Item = "Rol FSRM";                 OK = $fsrm;  Value = $(if ($fsrm) { 'Instalado' } else { 'No instalado (se instalara al usar)' }); Critical = $false })
+    $fsrm = ($null -ne $fsrmFeature -and $fsrmFeature.InstallState -eq 'Installed')
+    $results.Add(@{ Item = "Rol FSRM"; OK = $fsrm; Value = $(if ($fsrm) { 'Instalado' } else { 'No instalado (se instalara al usar)' }); Critical = $false })
 
     # ── AppIdSvc ──────────────────────────────────────────────────────────────
     $appIdObj = Get-Service -Name 'AppIdSvc' -ErrorAction SilentlyContinue
-    $appId    = ($null -ne $appIdObj -and $appIdObj.Status -eq 'Running')
-    $results.Add(@{ Item = "Servicio AppIdSvc";        OK = $appId; Value = $(if ($appId) { 'Running' } else { 'No activo (se activara al usar AppLocker)' }); Critical = $false })
+    $appId = ($null -ne $appIdObj -and $appIdObj.Status -eq 'Running')
+    $results.Add(@{ Item = "Servicio AppIdSvc"; OK = $appId; Value = $(if ($appId) { 'Running' } else { 'No activo (se activara al usar AppLocker)' }); Critical = $false })
 
     # ── Espacio en disco ──────────────────────────────────────────────────────
     try {
-        $disk   = Get-PSDrive -Name C -ErrorAction Stop
+        $disk = Get-PSDrive -Name C -ErrorAction Stop
         $freeGB = [Math]::Round($disk.Free / 1GB, 1)
         $diskOK = $freeGB -ge 1
-        $results.Add(@{ Item = "Espacio libre en C:";  OK = $diskOK; Value = "$freeGB GB"; Critical = $false })
-    } catch {
-        $results.Add(@{ Item = "Espacio libre en C:";  OK = $false; Value = "No determinado"; Critical = $false })
+        $results.Add(@{ Item = "Espacio libre en C:"; OK = $diskOK; Value = "$freeGB GB"; Critical = $false })
+    }
+    catch {
+        $results.Add(@{ Item = "Espacio libre en C:"; OK = $false; Value = "No determinado"; Critical = $false })
     }
 
     # ── Mostrar resultados ────────────────────────────────────────────────────
@@ -143,8 +147,8 @@ function Test-Prerequisites {
     Write-Host "  Verificacion de prerequisites:" -ForegroundColor Cyan
     Write-Host ""
     foreach ($r in $results) {
-        $icon  = if ($r.OK) { "[  OK  ]" } else { if ($r.Critical) { "[ FAIL ]" } else { "[ WARN ]" } }
-        $color = if ($r.OK) { 'Green'    } else { if ($r.Critical) { 'Red'      } else { 'Yellow'  } }
+        $icon = if ($r.OK) { "[  OK  ]" } else { if ($r.Critical) { "[ FAIL ]" } else { "[ WARN ]" } }
+        $color = if ($r.OK) { 'Green' } else { if ($r.Critical) { 'Red' } else { 'Yellow' } }
         Write-Host "    " -NoNewline
         Write-Host $icon -ForegroundColor $color -NoNewline
         Write-Host " $($r.Item.PadRight(35)) $($r.Value)"
@@ -191,14 +195,15 @@ function Show-Banner {
 
 # -----------------------------------------------------------------------------
 # INDICADORES DE ESTADO EN TIEMPO REAL
-# Consultan AD en vivo — cada funcion devuelve icono coloreado
+# Consultan AD en vivo - cada funcion devuelve icono coloreado
 # -----------------------------------------------------------------------------
 
 function Get-StatusIcon {
     param([bool] $Ok)
     if ($Ok) {
         Write-Host "●" -ForegroundColor Green -NoNewline
-    } else {
+    }
+    else {
         Write-Host "○" -ForegroundColor Red -NoNewline
     }
 }
@@ -211,10 +216,11 @@ function Test-StatusOUs {
     if (-not (Test-StatusAD)) { return $false }
     try {
         $dn = $script:AD_DOMAIN_DN
-        $c  = Get-ADOrganizationalUnit -Filter "Name -eq 'Cuates'"   -SearchBase $dn -EA Stop
-        $n  = Get-ADOrganizationalUnit -Filter "Name -eq 'NoCuates'" -SearchBase $dn -EA Stop
+        $c = Get-ADOrganizationalUnit -Filter "Name -eq 'Cuates'"   -SearchBase $dn -EA Stop
+        $n = Get-ADOrganizationalUnit -Filter "Name -eq 'NoCuates'" -SearchBase $dn -EA Stop
         return ($null -ne $c -and $null -ne $n)
-    } catch { return $false }
+    }
+    catch { return $false }
 }
 
 function Test-StatusUsers {
@@ -222,15 +228,17 @@ function Test-StatusUsers {
         $c = @(Get-ADGroupMember 'GRP_Cuates'   -EA Stop).Count
         $n = @(Get-ADGroupMember 'GRP_NoCuates' -EA Stop).Count
         return ($c -gt 0 -and $n -gt 0)
-    } catch { return $false }
+    }
+    catch { return $false }
 }
 
 function Test-StatusLogonHours {
     try {
         $b = @(Get-ADUser -Filter * -SearchBase $script:AD_DOMAIN_DN `
-              -Properties LogonHours -EA Stop | Where-Object { $null -ne $_.LogonHours }).Count
+                -Properties LogonHours -EA Stop | Where-Object { $null -ne $_.LogonHours }).Count
         return ($b -gt 0)
-    } catch { return $false }
+    }
+    catch { return $false }
 }
 
 function Test-StatusFSRM {
@@ -239,20 +247,27 @@ function Test-StatusFSRM {
         if ($f.InstallState -ne 'Installed') { return $false }
         $q = Get-FsrmQuota -EA SilentlyContinue | Select-Object -First 1
         return ($null -ne $q)
-    } catch { return $false }
+    }
+    catch { return $false }
 }
 
 function Test-StatusAppLocker {
     try {
-        $g1 = Get-GPO -Name 'AppLocker-Cuates-T08'   -EA SilentlyContinue
-        $g2 = Get-GPO -Name 'AppLocker-NoCuates-T08' -EA SilentlyContinue
-        return ($null -ne $g1 -and $null -ne $g2)
-    } catch { return $false }
+        # Buscar dinamicamente: cualquier par de GPOs con 'AppLocker' en el nombre
+        $alGPOs = @(Get-GPO -All -EA Stop | Where-Object { $_.DisplayName -match 'AppLocker' })
+        return ($alGPOs.Count -ge 2)
+    }
+    catch { return $false }
 }
 
 function Test-StatusAppIDSvc {
     $s = Get-Service -Name 'AppIdSvc' -EA SilentlyContinue
     return ($null -ne $s -and $s.Status -eq 'Running')
+}
+
+function Test-StatusRoaming {
+    if (-not (Get-Command 'Test-RoamingShareExists' -ErrorAction SilentlyContinue)) { return $false }
+    return (Test-RoamingShareExists)
 }
 
 # -----------------------------------------------------------------------------
@@ -261,7 +276,7 @@ function Test-StatusAppIDSvc {
 
 function Show-MainMenu {
     $domainInfo = if ($script:AD_DOMAIN) { $script:AD_DOMAIN } else { "No conectado" }
-    $logInfo    = if ($script:LOG_PATH)  { [System.IO.Path]::GetFileName($script:LOG_PATH) } else { "Sin log" }
+    $logInfo = if ($script:LOG_PATH) { [System.IO.Path]::GetFileName($script:LOG_PATH) } else { "Sin log" }
 
     Write-Host "  " -NoNewline
     Write-Host "Dominio: " -ForegroundColor DarkGray -NoNewline
@@ -272,24 +287,26 @@ function Show-MainMenu {
 
     # Calcular indicadores una vez
     if ($script:AD_DOMAIN_DN) {
-        $stAD    = Test-StatusAD
-        $stOUs   = Test-StatusOUs
+        $stAD = Test-StatusAD
+        $stOUs = Test-StatusOUs
         $stUsers = Test-StatusUsers
-        $stLH    = Test-StatusLogonHours
-        $stFSRM  = Test-StatusFSRM
-        $stAL    = Test-StatusAppLocker
-        $stSvc   = Test-StatusAppIDSvc
-    } else {
-        $stAD = $stOUs = $stUsers = $stLH = $stFSRM = $stAL = $stSvc = $false
+        $stLH = Test-StatusLogonHours
+        $stFSRM = Test-StatusFSRM
+        $stAL = Test-StatusAppLocker
+        $stSvc = Test-StatusAppIDSvc
+        $stRoaming = Test-StatusRoaming
+    }
+    else {
+        $stAD = $stOUs = $stUsers = $stLH = $stFSRM = $stAL = $stSvc = $stRoaming = $false
     }
 
     # ── Parte 1 ───────────────────────────────────────────────────────────────
     Write-Host "  " -NoNewline
-    Write-Host "[ PARTE 1 — Gestion de Recursos ]" -ForegroundColor Cyan
+    Write-Host "[ PARTE 1 - Gestion de Recursos ]" -ForegroundColor Cyan
     Write-Host ""
 
     Write-Host "    [1]  " -NoNewline
-    Get-StatusIcon $stOUs;  Write-Host "  " -NoNewline
+    Get-StatusIcon $stOUs; Write-Host "  " -NoNewline
     Get-StatusIcon $stUsers
     Write-Host "  Gestion de Active Directory    " -NoNewline
     Write-Host "(OUs, Usuarios, Grupos, CSV/ABC)" -ForegroundColor DarkGray
@@ -310,24 +327,29 @@ function Show-MainMenu {
     Write-Host "  Control de Ejecucion           " -NoNewline
     Write-Host "(AppLocker: reglas por grupo)" -ForegroundColor DarkGray
 
+    Write-Host "    [P]  " -NoNewline
+    Get-StatusIcon $stRoaming
+    Write-Host "     Perfiles Moviles              " -NoNewline
+    Write-Host "(Roaming Profiles: share, AD, GPO)" -ForegroundColor DarkGray
+
     Write-Host ""
 
     # ── Parte 2 ───────────────────────────────────────────────────────────────
     Write-Host "  " -NoNewline
-    Write-Host "[ PARTE 2 — Hardening y Seguridad ]" -ForegroundColor Cyan
+    Write-Host "[ PARTE 2 - Hardening y Seguridad ]" -ForegroundColor Cyan
     Write-Host ""
 
     $p2Modules = @(
-        @{ Num = '5'; Label = 'Delegacion de Control         '; Desc = '(RBAC: 4 roles delegados, ACLs)';    Mod = 'Invoke-RBACMenu'  }
-        @{ Num = '6'; Label = 'Directivas de Contrasena      '; Desc = '(FGPP: admins 12 / estandar 8)';    Mod = 'Invoke-FGPPMenu'  }
-        @{ Num = '7'; Label = 'Auditoria de Eventos          '; Desc = '(auditpol, extraccion eventos)';     Mod = 'Invoke-AuditMenu' }
-        @{ Num = '8'; Label = 'Autenticacion MFA             '; Desc = '(multiOTP + Google Authenticator)';  Mod = 'Invoke-MFAMenu'   }
+        @{ Num = '5'; Label = 'Delegacion de Control         '; Desc = '(RBAC: 4 roles delegados, ACLs)'; Mod = 'Invoke-RBACMenu' }
+        @{ Num = '6'; Label = 'Directivas de Contrasena      '; Desc = '(FGPP: admins 12 / estandar 8)'; Mod = 'Invoke-FGPPMenu' }
+        @{ Num = '7'; Label = 'Auditoria de Eventos          '; Desc = '(auditpol, extraccion eventos)'; Mod = 'Invoke-AuditMenu' }
+        @{ Num = '8'; Label = 'Autenticacion MFA             '; Desc = '(multiOTP + Google Authenticator)'; Mod = 'Invoke-MFAMenu' }
     )
 
     foreach ($item in $p2Modules) {
         $available = [bool](Get-Command $item.Mod -ErrorAction SilentlyContinue)
-        $color     = if ($available) { 'White' } else { 'DarkGray' }
-        $status    = if ($available) { '' } else { ' [no disponible]' }
+        $color = if ($available) { 'White' } else { 'DarkGray' }
+        $status = if ($available) { '' } else { ' [no disponible]' }
         Write-Host "    [$($item.Num)]  " -NoNewline
         Write-Host "$($item.Label)" -ForegroundColor $color -NoNewline
         Write-Host "$($item.Desc)$status" -ForegroundColor DarkGray
@@ -356,7 +378,7 @@ function Show-MainMenu {
 }
 
 # -----------------------------------------------------------------------------
-# MENU USUARIOS — alta, baja, detalle, habilitar/deshabilitar, password
+# MENU USUARIOS - alta, baja, detalle, habilitar/deshabilitar, password
 # -----------------------------------------------------------------------------
 function Invoke-UsersMenu {
     while ($true) {
@@ -387,9 +409,9 @@ function Invoke-UsersMenu {
                 draw_header "Todos los Usuarios"
                 Get-ADUser -Filter * -SearchBase $script:AD_DOMAIN_DN `
                     -Properties Department -EA SilentlyContinue |
-                    Select-Object SamAccountName, Name, Department, Enabled |
-                    Sort-Object Department, SamAccountName |
-                    Format-Table -AutoSize
+                Select-Object SamAccountName, Name, Department, Enabled |
+                Sort-Object Department, SamAccountName |
+                Format-Table -AutoSize
                 msg_pause
             }
             '2' {
@@ -434,7 +456,8 @@ function Invoke-UsersMenu {
                     Write-Log SUCCESS "Cuenta $sam deshabilitada."
                     msg_success "Cuenta $sam deshabilitada."
                     msg_info "Para eliminar permanentemente: Remove-ADUser $sam"
-                } catch {
+                }
+                catch {
                     Write-Log ERROR "Error al deshabilitar $sam : $_"
                     msg_error "No se pudo deshabilitar la cuenta: $_"
                 }
@@ -457,12 +480,14 @@ function Invoke-UsersMenu {
                     if ($u.Enabled) {
                         Disable-ADAccount -Identity $sam -EA Stop
                         msg_success "Cuenta $sam deshabilitada."
-                    } else {
+                    }
+                    else {
                         Enable-ADAccount -Identity $sam -EA Stop
                         msg_success "Cuenta $sam habilitada."
                     }
                     Write-Log INFO "Toggle cuenta $sam : Enabled=$(-not $u.Enabled)"
-                } catch {
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -478,7 +503,8 @@ function Invoke-UsersMenu {
                     Set-ADAccountPassword -Identity $sam -NewPassword $newPass -Reset -EA Stop
                     msg_success "Contrasena de $sam actualizada."
                     Write-Log SUCCESS "Contrasena cambiada para: $sam"
-                } catch {
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -490,7 +516,7 @@ function Invoke-UsersMenu {
 }
 
 # -----------------------------------------------------------------------------
-# Show-UserDetail — vista completa de un usuario individual
+# Show-UserDetail - vista completa de un usuario individual
 # Muestra LastLogonDate, estado LogonHours, OU, grupos, etc.
 # -----------------------------------------------------------------------------
 function Show-UserDetail {
@@ -498,10 +524,10 @@ function Show-UserDetail {
 
     try {
         $u = Get-ADUser $SamAccountName `
-             -Properties DisplayName, UserPrincipalName, Department, Enabled,
-                         LastLogonDate, LogonHours, DistinguishedName,
-                         LockedOut, PasswordExpired, MemberOf `
-             -ErrorAction Stop
+            -Properties DisplayName, UserPrincipalName, Department, Enabled,
+        LastLogonDate, LogonHours, DistinguishedName,
+        LockedOut, PasswordExpired, MemberOf `
+            -ErrorAction Stop
 
         draw_header "Detalle: $($u.SamAccountName)"
         msg_info "Nombre:          $($u.DisplayName)"
@@ -514,36 +540,39 @@ function Show-UserDetail {
             Write-Host "[INFO]  " -ForegroundColor Blue -NoNewline
             Write-Host "Habilitado: " -NoNewline
             Write-Host "Si" -ForegroundColor Green
-        } else {
+        }
+        else {
             msg_alert "Habilitado: No"
         }
 
-        if ($u.LockedOut)       { msg_alert "Cuenta BLOQUEADA" }
+        if ($u.LockedOut) { msg_alert "Cuenta BLOQUEADA" }
         if ($u.PasswordExpired) { msg_alert "Contrasena EXPIRADA" }
 
         $ultimoLogin = if ($u.LastLogonDate) {
             $u.LastLogonDate.ToString('yyyy-MM-dd HH:mm')
-        } else { "(nunca)" }
+        }
+        else { "(nunca)" }
         msg_info "Ultimo login:    $ultimoLogin"
 
         $tieneHoras = ($null -ne $u.LogonHours -and $u.LogonHours.Count -eq 21)
-        $lhEstado   = if ($tieneHoras) { "Configurado (21 bytes)" } else { "Sin restriccion" }
+        $lhEstado = if ($tieneHoras) { "Configurado (21 bytes)" } else { "Sin restriccion" }
         msg_info "LogonHours:      $lhEstado"
 
         if ($u.MemberOf -and $u.MemberOf.Count -gt 0) {
             msg_info "Grupos ($($u.MemberOf.Count)):"
             $u.MemberOf | ForEach-Object {
-                $gname = ($_ -split ',')[0] -replace '^CN=',''
+                $gname = ($_ -split ',')[0] -replace '^CN=', ''
                 Write-Host "                 • $gname"
             }
         }
-    } catch {
+    }
+    catch {
         msg_error "Usuario '$SamAccountName' no encontrado: $_"
     }
 }
 
 # -----------------------------------------------------------------------------
-# MENU MONITOREO — cuotas, eventos FSRM, sesiones, cuentas bloqueadas
+# MENU MONITOREO - cuotas, eventos FSRM, sesiones, cuentas bloqueadas
 # -----------------------------------------------------------------------------
 function Invoke-MonitorMenu {
     while ($true) {
@@ -570,23 +599,25 @@ function Invoke-MonitorMenu {
                     $quotas = @(Get-FsrmQuota -EA Stop | Sort-Object Usage -Descending)
                     if ($quotas.Count -eq 0) {
                         msg_alert "No hay cuotas configuradas."
-                    } else {
+                    }
+                    else {
                         Write-Host ""
                         Write-Host ("  {0,-20} {1,-8} {2,-8} {3,-6}  {4}" -f `
-                            "Usuario","Limite","Uso","Pct","Estado")
+                                "Usuario", "Limite", "Uso", "Pct", "Estado")
                         Write-Host "  ────────────────────────────────────────────────────"
                         foreach ($q in $quotas) {
-                            $pct    = if ($q.Size -gt 0) { [Math]::Round(($q.Usage/$q.Size)*100,1) } else { 0 }
+                            $pct = if ($q.Size -gt 0) { [Math]::Round(($q.Usage / $q.Size) * 100, 1) } else { 0 }
                             $limite = "$([Math]::Round($q.Size/1MB,0))MB"
-                            $uso    = "$([Math]::Round($q.Usage/1KB,0))KB"
-                            $user   = Split-Path $q.Path -Leaf
-                            $color  = if ($pct -gt 90) { 'Red' } elseif ($pct -gt 70) { 'Yellow' } else { 'Green' }
+                            $uso = "$([Math]::Round($q.Usage/1KB,0))KB"
+                            $user = Split-Path $q.Path -Leaf
+                            $color = if ($pct -gt 90) { 'Red' } elseif ($pct -gt 70) { 'Yellow' } else { 'Green' }
                             $estado = if ($pct -gt 90) { 'CRITICO' } elseif ($pct -gt 70) { 'ADVERTENCIA' } else { 'OK' }
-                            Write-Host ("  {0,-20} {1,-8} {2,-8} {3,-6}  " -f $user,$limite,$uso,"$pct%") -NoNewline
+                            Write-Host ("  {0,-20} {1,-8} {2,-8} {3,-6}  " -f $user, $limite, $uso, "$pct%") -NoNewline
                             Write-Host $estado -ForegroundColor $color
                         }
                     }
-                } catch {
+                }
+                catch {
                     msg_error "FSRM no disponible: $_"
                 }
                 msg_pause
@@ -596,18 +627,20 @@ function Invoke-MonitorMenu {
                 msg_process "Consultando log de FSRM..."
                 try {
                     $events = @(Get-WinEvent -LogName 'Microsoft-Windows-FSRM/Operational' `
-                        -MaxEvents 20 -EA Stop |
+                            -MaxEvents 20 -EA Stop |
                         Where-Object { $_.Id -in @(8215, 8214, 8210) })
                     if ($events.Count -eq 0) {
                         msg_info "No hay eventos de bloqueo recientes."
                         msg_info "Los eventos ID 8215 aparecen cuando se rechaza un archivo."
-                    } else {
+                    }
+                    else {
                         $events | ForEach-Object {
                             $msg = $_.Message.Substring(0, [Math]::Min(80, $_.Message.Length))
                             Write-Host "  $($_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'))  ID:$($_.Id)  $msg"
                         }
                     }
-                } catch {
+                }
+                catch {
                     msg_alert "No se encontraron eventos FSRM (log puede estar vacio)."
                 }
                 msg_pause
@@ -617,12 +650,13 @@ function Invoke-MonitorMenu {
                 try {
                     Get-ADUser -Filter * -SearchBase $script:AD_DOMAIN_DN `
                         -Properties LastLogonDate, Department -EA Stop |
-                        Where-Object { $null -ne $_.LastLogonDate } |
-                        Sort-Object LastLogonDate -Descending |
-                        Select-Object -First 20 |
-                        Select-Object SamAccountName, Name, Department, LastLogonDate |
-                        Format-Table -AutoSize
-                } catch {
+                    Where-Object { $null -ne $_.LastLogonDate } |
+                    Sort-Object LastLogonDate -Descending |
+                    Select-Object -First 20 |
+                    Select-Object SamAccountName, Name, Department, LastLogonDate |
+                    Format-Table -AutoSize
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -632,7 +666,8 @@ function Invoke-MonitorMenu {
                 msg_process "Consultando sesiones activas (query session)..."
                 try {
                     query session 2>&1 | ForEach-Object { Write-Host "  $_" }
-                } catch {
+                }
+                catch {
                     msg_alert "No se pudo obtener sesiones: $_"
                 }
                 msg_pause
@@ -642,19 +677,20 @@ function Invoke-MonitorMenu {
                 try {
                     $users = Get-ADUser -Filter * -SearchBase $script:AD_DOMAIN_DN `
                         -Properties LogonHours, Department -EA Stop |
-                        Sort-Object Department, SamAccountName
+                    Sort-Object Department, SamAccountName
 
                     Write-Host ""
-                    Write-Host ("  {0,-12} {1,-15} {2}" -f "Usuario","Departamento","LogonHours")
+                    Write-Host ("  {0,-12} {1,-15} {2}" -f "Usuario", "Departamento", "LogonHours")
                     Write-Host "  ──────────────────────────────────────────"
                     foreach ($u in $users) {
                         $tieneHoras = ($null -ne $u.LogonHours -and $u.LogonHours.Count -eq 21)
-                        $color      = if ($tieneHoras) { 'Green' } else { 'Yellow' }
-                        $estado     = if ($tieneHoras) { "Configurado" } else { "Sin restriccion" }
-                        Write-Host ("  {0,-12} {1,-15} " -f $u.SamAccountName,$u.Department) -NoNewline
+                        $color = if ($tieneHoras) { 'Green' } else { 'Yellow' }
+                        $estado = if ($tieneHoras) { "Configurado" } else { "Sin restriccion" }
+                        Write-Host ("  {0,-12} {1,-15} " -f $u.SamAccountName, $u.Department) -NoNewline
                         Write-Host $estado -ForegroundColor $color
                     }
-                } catch {
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -663,26 +699,27 @@ function Invoke-MonitorMenu {
                 draw_header "Cuentas Bloqueadas o Deshabilitadas"
                 try {
                     # Search-ADAccount -LockedOut es el metodo correcto.
-                    # Get-ADUser -Filter { LockedOut -eq $true } NO funciona —
+                    # Get-ADUser -Filter { LockedOut -eq $true } NO funciona -
                     # LockedOut no es filtrable en LDAP.
-                    $bloqueadas     = @(Search-ADAccount -LockedOut -SearchBase $script:AD_DOMAIN_DN `
-                                        -EA SilentlyContinue)
+                    $bloqueadas = @(Search-ADAccount -LockedOut -SearchBase $script:AD_DOMAIN_DN `
+                            -EA SilentlyContinue)
                     $deshabilitadas = @(Get-ADUser -Filter { Enabled -eq $false } `
-                                        -SearchBase $script:AD_DOMAIN_DN `
-                                        -Properties Department -EA SilentlyContinue |
-                                        Where-Object { $_.SamAccountName -notin @('Guest','krbtgt') })
+                            -SearchBase $script:AD_DOMAIN_DN `
+                            -Properties Department -EA SilentlyContinue |
+                        Where-Object { $_.SamAccountName -notin @('Guest', 'krbtgt') })
 
                     $todas = @(($bloqueadas + $deshabilitadas) |
-                             Sort-Object SamAccountName -Unique)
+                        Sort-Object SamAccountName -Unique)
 
                     if ($todas.Count -eq 0) {
                         msg_success "No hay cuentas bloqueadas ni deshabilitadas."
-                    } else {
+                    }
+                    else {
                         Write-Host ""
                         foreach ($u in $todas) {
                             $full = Get-ADUser $u.SamAccountName `
-                                    -Properties Enabled, LockedOut, Department `
-                                    -EA SilentlyContinue
+                                -Properties Enabled, LockedOut, Department `
+                                -EA SilentlyContinue
                             if ($full) {
                                 Write-Host "  $($full.SamAccountName.PadRight(15)) $($full.Department.PadRight(12)) " -NoNewline
                                 if ($full.LockedOut) {
@@ -695,7 +732,8 @@ function Invoke-MonitorMenu {
                             }
                         }
                     }
-                } catch {
+                }
+                catch {
                     msg_error "Error al consultar cuentas: $_"
                 }
                 msg_pause
@@ -704,9 +742,10 @@ function Invoke-MonitorMenu {
                 draw_header "GPOs del Dominio"
                 try {
                     Get-GPO -All -EA Stop |
-                        Select-Object DisplayName, GpoStatus, CreationTime |
-                        Format-Table -AutoSize
-                } catch {
+                    Select-Object DisplayName, GpoStatus, CreationTime |
+                    Format-Table -AutoSize
+                }
+                catch {
                     msg_error "Modulo GroupPolicy no disponible."
                 }
                 msg_pause
@@ -718,7 +757,7 @@ function Invoke-MonitorMenu {
 }
 
 # -----------------------------------------------------------------------------
-# MENU CLIENTES — detecta clientes desde AD, maneja DNS, OU, LogonHours
+# MENU CLIENTES - detecta clientes desde AD, maneja DNS, OU, LogonHours
 # -----------------------------------------------------------------------------
 function Invoke-ClientsMenu {
     while ($true) {
@@ -726,22 +765,22 @@ function Invoke-ClientsMenu {
         draw_header "Gestion de Clientes del Dominio"
 
         # Detectar clientes dinamicamente desde AD
-        $domainDNS    = $script:AD_DOMAIN
+        $domainDNS = $script:AD_DOMAIN
         $allComputers = @(Get-ADComputer -Filter * -Properties OperatingSystem -EA SilentlyContinue |
-                          Where-Object { $_.Name -ne $env:COMPUTERNAME })
+            Where-Object { $_.Name -ne $env:COMPUTERNAME })
 
         $linuxClients = @($allComputers | Where-Object {
-            $_.OperatingSystem -like '*Linux*'   -or
-            $_.OperatingSystem -like '*Fedora*'  -or
-            $_.OperatingSystem -like '*Ubuntu*'  -or
-            $_.OperatingSystem -like '*Red Hat*'
-        })
+                $_.OperatingSystem -like '*Linux*' -or
+                $_.OperatingSystem -like '*Fedora*' -or
+                $_.OperatingSystem -like '*Ubuntu*' -or
+                $_.OperatingSystem -like '*Red Hat*'
+            })
         $win10Clients = @($allComputers | Where-Object {
-            $_.OperatingSystem -like '*Windows 10*' -or
-            $_.OperatingSystem -like '*Windows 11*' -or
-            ($_.OperatingSystem -notlike '*Server*' -and $_.OperatingSystem -notlike '*Linux*' -and
-             $_.OperatingSystem -notlike '*Fedora*')
-        })
+                $_.OperatingSystem -like '*Windows 10*' -or
+                $_.OperatingSystem -like '*Windows 11*' -or
+                ($_.OperatingSystem -notlike '*Server*' -and $_.OperatingSystem -notlike '*Linux*' -and
+                $_.OperatingSystem -notlike '*Fedora*')
+            })
 
         if ($linuxClients.Count -eq 0 -and $win10Clients.Count -eq 0) {
             $win10Clients = $allComputers
@@ -751,13 +790,15 @@ function Invoke-ClientsMenu {
         $hora = (Get-Date).Hour
         if ($hora -ge 8 -and $hora -lt 15) {
             $grupoActivo = "GRP_Cuates (8AM-3PM)"
-            $grupoColor  = 'Green'
-        } elseif ($hora -ge 15 -or $hora -lt 2) {
+            $grupoColor = 'Green'
+        }
+        elseif ($hora -ge 15 -or $hora -lt 2) {
             $grupoActivo = "GRP_NoCuates (3PM-2AM)"
-            $grupoColor  = 'Cyan'
-        } else {
+            $grupoColor = 'Cyan'
+        }
+        else {
             $grupoActivo = "Fuera de horario (2AM-8AM)"
-            $grupoColor  = 'Yellow'
+            $grupoColor = 'Yellow'
         }
 
         msg_info "Hora actual: $(Get-Date -Format 'HH:mm')   Grupo activo: " -NoNewline 2>$null
@@ -773,7 +814,7 @@ function Invoke-ClientsMenu {
         }
         foreach ($c in $win10Clients) {
             $ok = $null -ne (Resolve-DnsName "$($c.Name).$domainDNS" -EA SilentlyContinue)
-            $ou = if ($c.DistinguishedName) { ($c.DistinguishedName -split ',')[1] -replace 'OU=','' } else { '?' }
+            $ou = if ($c.DistinguishedName) { ($c.DistinguishedName -split ',')[1] -replace 'OU=', '' } else { '?' }
             Write-Host "  " -NoNewline
             Write-Host $(if ($ok) { "●" } else { "○" }) -ForegroundColor $(if ($ok) { 'Green' } else { 'Red' }) -NoNewline
             Write-Host "  Win10   $($c.Name)  (OU=$ou)"
@@ -816,7 +857,8 @@ function Invoke-ClientsMenu {
                         -TimeToLive '01:00:00' -EA Stop
                     msg_success "DNS registrado: $clientName.$domainDNS -> $clientIP"
                     Write-Log SUCCESS "DNS Linux registrado: $clientName -> $clientIP"
-                } catch {
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -841,7 +883,8 @@ function Invoke-ClientsMenu {
                         -Name $cName -IPv4Address $cIP -TimeToLive '01:00:00' -EA Stop
                     msg_success "DNS registrado: $cName.$domainDNS -> $cIP"
                     Write-Log SUCCESS "DNS Win10 registrado: $cName -> $cIP"
-                } catch {
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -853,9 +896,10 @@ function Invoke-ClientsMenu {
                     msg_pause; break
                 }
                 $horaAhora = (Get-Date).Hour
-                $ouTarget  = if ($horaAhora -ge 8 -and $horaAhora -lt 15) {
+                $ouTarget = if ($horaAhora -ge 8 -and $horaAhora -lt 15) {
                     "OU=Cuates,$script:AD_DOMAIN_DN"
-                } else {
+                }
+                else {
                     "OU=NoCuates,$script:AD_DOMAIN_DN"
                 }
                 $ouName = if ($horaAhora -ge 8 -and $horaAhora -lt 15) { "Cuates" } else { "NoCuates" }
@@ -864,12 +908,14 @@ function Invoke-ClientsMenu {
                     $comp = Get-ADComputer $win10Name -EA Stop
                     if ($comp.DistinguishedName -like "*$ouTarget*") {
                         msg_info "El equipo ya esta en OU=$ouName"
-                    } else {
+                    }
+                    else {
                         Move-ADObject -Identity $comp.DistinguishedName -TargetPath $ouTarget -EA Stop
                         msg_success "Equipo $win10Name movido a OU=$ouName"
                         msg_info "Ejecuta 'gpupdate /force' en el cliente Win10."
                     }
-                } catch {
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -883,12 +929,12 @@ function Invoke-ClientsMenu {
                 if ($confirm -eq $false) { msg_pause; break }
                 try {
                     $users = Get-ADUser -Filter * -SearchBase $script:AD_DOMAIN_DN `
-                             -Properties LogonHours -EA Stop |
-                             Where-Object { $null -ne $_.LogonHours }
+                        -Properties LogonHours -EA Stop |
+                    Where-Object { $null -ne $_.LogonHours }
                     $ok = 0
                     foreach ($u in $users) {
-                        $dn   = $u.DistinguishedName
-                        $de   = New-Object DirectoryServices.DirectoryEntry("LDAP://$dn")
+                        $dn = $u.DistinguishedName
+                        $de = New-Object DirectoryServices.DirectoryEntry("LDAP://$dn")
                         $de.Properties["logonHours"].Clear()
                         $de.CommitChanges()
                         $de.Dispose()
@@ -897,7 +943,8 @@ function Invoke-ClientsMenu {
                     msg_success "LogonHours eliminados de $ok usuarios."
                     msg_alert "Recuerda restaurarlos con la opcion 5."
                     Write-Log WARN "LogonHours temporalmente eliminados de $ok usuarios para pruebas."
-                } catch {
+                }
+                catch {
                     msg_error "Error: $_"
                 }
                 msg_pause
@@ -907,15 +954,16 @@ function Invoke-ClientsMenu {
                 msg_process "Restaurando horarios originales..."
                 $ok1 = Clear-LogonHours -TargetType Group -TargetName 'GRP_Cuates'
                 $ok1 = Set-LogonHoursGroup -GroupName 'GRP_Cuates'   -LogonBytes `
-                       (ConvertTo-LogonHoursBytes -StartHourLocal 8  -EndHourLocal 15 `
+                (ConvertTo-LogonHoursBytes -StartHourLocal 8  -EndHourLocal 15 `
                         -UTCOffset (Get-UTCOffset))
                 $ok2 = Set-LogonHoursGroup -GroupName 'GRP_NoCuates' -LogonBytes `
-                       (ConvertTo-LogonHoursBytes -StartHourLocal 15 -EndHourLocal 2 `
+                (ConvertTo-LogonHoursBytes -StartHourLocal 15 -EndHourLocal 2 `
                         -UTCOffset (Get-UTCOffset))
                 if ($ok1 -and $ok2) {
                     msg_success "Restaurados: Cuates 8AM-3PM | NoCuates 3PM-2AM"
                     Write-Log SUCCESS "LogonHours restaurados a valores originales."
-                } else {
+                }
+                else {
                     msg_alert "Algunos horarios no se pudieron restaurar. Revisa el log."
                 }
                 msg_pause
@@ -924,7 +972,8 @@ function Invoke-ClientsMenu {
                 draw_header "Estado Win10 en AD"
                 if ($null -eq $win10Name) {
                     msg_error "No hay equipos Win10 registrados en AD."
-                } else {
+                }
+                else {
                     try {
                         $comp = Get-ADComputer $win10Name -Properties * -EA Stop
                         msg_info "Nombre:    $($comp.Name)"
@@ -932,7 +981,8 @@ function Invoke-ClientsMenu {
                         msg_info "Unido:     $($comp.WhenCreated)"
                         msg_info "OS:        $($comp.OperatingSystem)"
                         msg_info "DNS:       $($comp.DNSHostName)"
-                    } catch {
+                    }
+                    catch {
                         msg_error "Equipo $win10Name no encontrado: $_"
                     }
                 }
@@ -945,11 +995,11 @@ function Invoke-ClientsMenu {
 }
 
 # -----------------------------------------------------------------------------
-# VERIFICACION GENERAL — estado completo de todos los componentes
+# VERIFICACION GENERAL - estado completo de todos los componentes
 # -----------------------------------------------------------------------------
 function Invoke-VerificationMenu {
     Show-Banner
-    draw_header "Verificacion General — AC Manager"
+    draw_header "Verificacion General - AC Manager"
 
     msg_info "Servidor : $env:COMPUTERNAME"
     msg_info "Fecha    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
@@ -957,83 +1007,201 @@ function Invoke-VerificationMenu {
 
     function _vcheck {
         param([string]$Desc, [string]$Result, [string]$Detail = "")
-        $icon = switch ($Result) {
-            'ok'   { Write-Host "  [  OK  ] " -ForegroundColor Green   -NoNewline }
-            'fail' { Write-Host "  [ FAIL ] " -ForegroundColor Red     -NoNewline }
-            'warn' { Write-Host "  [ WARN ] " -ForegroundColor Yellow  -NoNewline }
+        switch ($Result) {
+            'ok'   { Write-Host "  [  OK  ] " -ForegroundColor Green    -NoNewline }
+            'fail' { Write-Host "  [ FAIL ] " -ForegroundColor Red      -NoNewline }
+            'warn' { Write-Host "  [ WARN ] " -ForegroundColor Yellow   -NoNewline }
             'skip' { Write-Host "  [ SKIP ] " -ForegroundColor DarkGray -NoNewline }
         }
         Write-Host "$($Desc.PadRight(40)) $Detail"
     }
 
-    # AD
+    # ── AD ────────────────────────────────────────────────────────────────────
     Write-Host "── Active Directory ─────────────────────────────────" -ForegroundColor Cyan
     if (Test-StatusAD) {
-        $dom  = Get-ADDomain -EA SilentlyContinue
+        $dom = Get-ADDomain -EA SilentlyContinue
         _vcheck "AD DS instalado y activo"  "ok"   $dom.DNSRoot
-        _vcheck "OUs Cuates / NoCuates"    $(if (Test-StatusOUs) { "ok" } else { "fail" })
+        _vcheck "OUs Cuates / NoCuates"    $(if (Test-StatusOUs)    { "ok" } else { "fail" })
         $cC = @(Get-ADGroupMember 'GRP_Cuates'   -EA SilentlyContinue).Count
         $cN = @(Get-ADGroupMember 'GRP_NoCuates' -EA SilentlyContinue).Count
-        _vcheck "Usuarios en grupos"       $(if (Test-StatusUsers) { "ok" } else { "fail" }) "Cuates: $cC | NoCuates: $cN"
-    } else {
+        _vcheck "Usuarios en grupos"       $(if (Test-StatusUsers)  { "ok" } else { "fail" }) "Cuates: $cC | NoCuates: $cN"
+
+        # OU=Admins y grupos RBAC (P09)
+        $adminOU = Get-ADOrganizationalUnit -Filter "Name -eq 'Admins'" -SearchBase $script:AD_DOMAIN_DN -EA SilentlyContinue
+        _vcheck "OU=Admins (RBAC P09)"     $(if ($adminOU) { "ok" } else { "warn" })
+        $grpDel = Get-ADGroup -Filter "Name -eq 'GRP_AdminDelegados'" -EA SilentlyContinue
+        _vcheck "GRP_AdminDelegados"       $(if ($grpDel)  { "ok" } else { "warn" })
+        $cAdm = if ($grpDel) { @(Get-ADGroupMember 'GRP_AdminDelegados' -EA SilentlyContinue).Count } else { 0 }
+        _vcheck "Admins delegados"         $(if ($cAdm -gt 0) { "ok" } else { "warn" }) "$cAdm cuenta(s)"
+    }
+    else {
         _vcheck "AD DS" "fail" "(no instalado)"
     }
 
-    # LogonHours
+    # ── LogonHours ────────────────────────────────────────────────────────────
     Write-Host ""
     Write-Host "── LogonHours ───────────────────────────────────────" -ForegroundColor Cyan
-    foreach ($sam in @('user01','user06')) {
+
+    # Usar los primeros miembros reales de cada grupo en lugar de nombres hardcodeados
+    $sampleUsers = @{}
+    foreach ($grp in @('GRP_Cuates','GRP_NoCuates')) {
         try {
-            $lhBytes = @((Get-ADUser $sam -Properties LogonHours -EA Stop).LogonHours)
-            $lhOk    = ($lhBytes.Count -eq 21)
-            _vcheck "LogonHours $sam" $(if ($lhOk) { "ok" } else { "fail" }) $(if ($lhOk) { "21 bytes" } else { "sin configurar" })
-        } catch {
-            _vcheck "LogonHours $sam" "skip" "(usuario no encontrado)"
+            $first = Get-ADGroupMember $grp -EA Stop |
+                     Where-Object { $_.objectClass -eq 'user' } |
+                     Select-Object -First 1
+            if ($first) { $sampleUsers[$grp] = $first.SamAccountName }
+        } catch {}
+    }
+
+    if ($sampleUsers.Count -eq 0) {
+        _vcheck "LogonHours" "warn" "(no hay usuarios en los grupos aun)"
+    }
+    else {
+        foreach ($grp in $sampleUsers.Keys) {
+            $sam = $sampleUsers[$grp]
+            try {
+                $lhBytes = @((Get-ADUser $sam -Properties LogonHours -EA Stop).LogonHours)
+                $lhOk = ($lhBytes.Count -eq 21)
+                _vcheck "LogonHours $sam ($grp)" $(if ($lhOk) { "ok" } else { "fail" }) $(if ($lhOk) { "21 bytes" } else { "sin configurar" })
+            }
+            catch {
+                _vcheck "LogonHours $sam" "skip" "(error al leer)"
+            }
         }
     }
-    $gpoLF = Get-GPO -Name 'Politica-ForzarLogoff-T08' -EA SilentlyContinue
-    _vcheck "GPO forzar logoff" $(if ($gpoLF) { "ok" } else { "fail" })
 
-    # FSRM
+    # GPO logoff - buscar cualquier GPO con 'Logoff' o 'ForzarLogoff' en el nombre
+    $gpoLF = Get-GPO -All -EA SilentlyContinue |
+             Where-Object { $_.DisplayName -match 'Logoff|ForzarLogoff|ForceLogoff' } |
+             Select-Object -First 1
+    _vcheck "GPO forzar logoff" $(if ($gpoLF) { "ok" } else { "fail" }) $(if ($gpoLF) { $gpoLF.DisplayName } else { "(no encontrada)" })
+
+    # ── FSRM ─────────────────────────────────────────────────────────────────
     Write-Host ""
     Write-Host "── FSRM ─────────────────────────────────────────────" -ForegroundColor Cyan
     _vcheck "Rol FSRM instalado" $(if (Test-StatusFSRM) { "ok" } else { "fail" })
-    try {
-        $q1 = Get-FsrmQuota "C:\Homes\user01" -EA Stop
-        _vcheck "Cuota user01 (10 MB)" "ok" "$([Math]::Round($q1.Size/1MB,0)) MB Hard"
-    } catch { _vcheck "Cuota user01" "fail" "(no encontrada)" }
-    try {
-        $q6 = Get-FsrmQuota "C:\Homes\user06" -EA Stop
-        _vcheck "Cuota user06 (5 MB)" "ok" "$([Math]::Round($q6.Size/1MB,0)) MB Hard"
-    } catch { _vcheck "Cuota user06" "fail" "(no encontrada)" }
-    try {
-        $fs = Get-FsrmFileScreen "C:\Homes\user01" -EA Stop
-        _vcheck "File Screen activo" $(if ($fs.Active) { "ok" } else { "warn" }) $fs.Template
-    } catch { _vcheck "File Screen" "fail" "(no encontrado)" }
 
-    # AppLocker
+    # Detectar ruta de cuotas dinamicamente: usar ROAMING_SHARE_PATH si esta configurado,
+    # o buscar cualquier cuota existente en el sistema
+    $quotaRoot = $null
+    if (-not [string]::IsNullOrWhiteSpace($script:ROAMING_SHARE_PATH) -and
+        (Test-Path $script:ROAMING_SHARE_PATH)) {
+        $quotaRoot = $script:ROAMING_SHARE_PATH
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($script:FSRM_HOMES_ROOT) -and
+            (Test-Path $script:FSRM_HOMES_ROOT)) {
+        $quotaRoot = $script:FSRM_HOMES_ROOT
+    }
+
+    if ($quotaRoot) {
+        try {
+            $allQuotas = @(Get-FsrmQuota -EA Stop | Where-Object { $_.Path -like "$quotaRoot*" })
+            if ($allQuotas.Count -eq 0) {
+                _vcheck "Cuotas en $quotaRoot" "warn" "(ninguna configurada aun)"
+            }
+            else {
+                $cuates10   = @($allQuotas | Where-Object { $_.Size -eq [int64](10*1MB) }).Count
+                $nocuates5  = @($allQuotas | Where-Object { $_.Size -eq [int64](5*1MB)  }).Count
+                $hardCount  = @($allQuotas | Where-Object { -not $_.SoftLimit }).Count
+                _vcheck "Cuotas 10 MB (Cuates)"    $(if ($cuates10  -gt 0) { "ok" } else { "warn" }) "$cuates10 carpeta(s)"
+                _vcheck "Cuotas 5 MB (NoCuates)"   $(if ($nocuates5 -gt 0) { "ok" } else { "warn" }) "$nocuates5 carpeta(s)"
+                _vcheck "Cuotas Hard Limit"         $(if ($hardCount -gt 0) { "ok" } else { "warn" }) "$hardCount de $($allQuotas.Count) son hard"
+            }
+        }
+        catch { _vcheck "Cuotas FSRM" "warn" "(FSRM no responde)" }
+
+        try {
+            $allScreens = @(Get-FsrmFileScreen -EA Stop | Where-Object { $_.Path -like "$quotaRoot*" })
+            $activeScreens = @($allScreens | Where-Object { $_.Active }).Count
+            _vcheck "File Screens activos" $(if ($activeScreens -gt 0) { "ok" } else { "warn" }) "$activeScreens activo(s) de $($allScreens.Count)"
+        }
+        catch { _vcheck "File Screens" "warn" "(FSRM no responde)" }
+
+        # Tarea programada watcher .V6
+        $watcherTask = Get-ScheduledTask -TaskName 'Sync-RoamingProfileV6' -EA SilentlyContinue
+        _vcheck "Watcher .V6 (tarea prog.)" $(if ($watcherTask) { "ok" } else { "warn" }) $(if ($watcherTask) { $watcherTask.State } else { "(no registrada)" })
+    }
+    else {
+        _vcheck "Rutas FSRM/Perfiles" "warn" "(configura P=Perfiles o FSRM primero)"
+    }
+
+    # ── AppLocker ─────────────────────────────────────────────────────────────
     Write-Host ""
     Write-Host "── AppLocker ────────────────────────────────────────" -ForegroundColor Cyan
-    foreach ($gpoName in @('AppLocker-Cuates-T08','AppLocker-NoCuates-T08')) {
-        $g = Get-GPO -Name $gpoName -EA SilentlyContinue
-        _vcheck $gpoName $(if ($g) { "ok" } else { "fail" })
+
+    # Buscar GPOs AppLocker dinamicamente (cualquier nombre que contenga 'AppLocker')
+    $alGPOs = Get-GPO -All -EA SilentlyContinue | Where-Object { $_.DisplayName -match 'AppLocker' }
+    if (@($alGPOs).Count -eq 0) {
+        _vcheck "GPOs AppLocker" "fail" "(ninguna encontrada)"
+    }
+    else {
+        foreach ($g in $alGPOs) {
+            _vcheck "GPO: $($g.DisplayName)" "ok" $g.GpoStatus
+        }
     }
     $appSvc = Get-Service 'AppIdSvc' -EA SilentlyContinue
-    _vcheck "AppIDSvc" $(if ($appSvc -and $appSvc.Status -eq 'Running') { "ok" } else { "fail" }) `
+    _vcheck "Servicio AppIDSvc" $(if ($appSvc -and $appSvc.Status -eq 'Running') { "ok" } else { "fail" }) `
         $(if ($appSvc) { $appSvc.Status } else { "no encontrado" })
 
-    # Servicios AD clave
+    # ── Perfiles moviles ──────────────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "── Perfiles Moviles ─────────────────────────────────" -ForegroundColor Cyan
+    $shareOK = $false
+    if ($script:ROAMING_SHARE_NAME) {
+        $shr = Get-SmbShare -Name $script:ROAMING_SHARE_NAME -EA SilentlyContinue
+        $shareOK = ($null -ne $shr)
+        _vcheck "Share SMB $script:ROAMING_SHARE_NAME" $(if ($shareOK) { "ok" } else { "fail" })
+    }
+    else {
+        # Buscar share Perfiles$ generico
+        $shr = Get-SmbShare -EA SilentlyContinue | Where-Object { $_.Name -match 'Perfiles' } | Select-Object -First 1
+        _vcheck "Share perfiles" $(if ($shr) { "ok" } else { "warn" }) $(if ($shr) { $shr.Name } else { "(no configurado)" })
+    }
+    $gpoRoam = Get-GPO -All -EA SilentlyContinue | Where-Object { $_.DisplayName -match 'Perfil|Roaming|Movil' } | Select-Object -First 1
+    _vcheck "GPO perfiles moviles" $(if ($gpoRoam) { "ok" } else { "warn" }) $(if ($gpoRoam) { $gpoRoam.DisplayName } else { "(no encontrada)" })
+
+    # Usuarios con ProfilePath configurado
+    if ($script:AD_DOMAIN_DN) {
+        try {
+            $usersWithPP = @(Get-ADUser -Filter * -SearchBase $script:AD_DOMAIN_DN `
+                -Properties ProfilePath -EA Stop |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_.ProfilePath) }).Count
+            $totalUsers = @(Get-ADUser -Filter * -SearchBase $script:AD_DOMAIN_DN -EA Stop).Count
+            _vcheck "Usuarios con ProfilePath" $(if ($usersWithPP -gt 0) { "ok" } else { "warn" }) "$usersWithPP / $totalUsers"
+        }
+        catch { _vcheck "ProfilePath AD" "warn" "(no se pudo consultar)" }
+    }
+
+    # ── RBAC y FGPP (P09) ────────────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "── Seguridad P09 (RBAC, FGPP, MFA) ─────────────────" -ForegroundColor Cyan
+
+    # FGPP
+    $fgppA = Get-ADFineGrainedPasswordPolicy -Filter "Name -eq 'FGPP-Admins'"   -EA SilentlyContinue
+    $fgppE = Get-ADFineGrainedPasswordPolicy -Filter "Name -eq 'FGPP-Estandar'" -EA SilentlyContinue
+    _vcheck "FGPP-Admins (12 chars)"    $(if ($fgppA) { "ok" } else { "warn" }) $(if ($fgppA) { "Precedencia $($fgppA.Precedence)" } else { "(no creada)" })
+    _vcheck "FGPP-Estandar (8 chars)"   $(if ($fgppE) { "ok" } else { "warn" }) $(if ($fgppE) { "Precedencia $($fgppE.Precedence)" } else { "(no creada)" })
+
+    # Admins delegados
+    $cAdmV = 0
+    try { $cAdmV = @(Get-ADGroupMember 'GRP_AdminDelegados' -EA Stop).Count } catch {}
+    _vcheck "Admins delegados creados"  $(if ($cAdmV -ge 4) { "ok" } else { "warn" }) "$cAdmV / 4 esperados"
+
+    # MFA multiOTP
+    $mfaOK = Test-Path "C:\multiOTP\windows\multiotp.exe"
+    _vcheck "multiOTP instalado"        $(if ($mfaOK) { "ok" } else { "warn" })
+
+    $cpDLL = Test-Path "C:\Windows\System32\multiOTPCredentialProvider.dll"
+    _vcheck "Credential Provider MFA"  $(if ($cpDLL) { "ok" } else { "warn" })
+
+    # ── Servicios AD clave ────────────────────────────────────────────────────
     Write-Host ""
     Write-Host "── Servicios AD ─────────────────────────────────────" -ForegroundColor Cyan
-    foreach ($svcName in @('ADWS','DNS','KDC','NETLOGON','W32Time')) {
+    foreach ($svcName in @('ADWS', 'DNS', 'KDC', 'NETLOGON', 'W32Time')) {
         $s = Get-Service -Name $svcName -EA SilentlyContinue
-        if ($null -eq $s) {
-            _vcheck "Servicio $svcName" "skip" "(no encontrado)"
-        } elseif ($s.Status -eq 'Running') {
-            _vcheck "Servicio $svcName" "ok" "Running"
-        } else {
-            _vcheck "Servicio $svcName" "fail" $s.Status
-        }
+        if ($null -eq $s)             { _vcheck "Servicio $svcName" "skip" "(no encontrado)" }
+        elseif ($s.Status -eq 'Running') { _vcheck "Servicio $svcName" "ok"   "Running" }
+        else                          { _vcheck "Servicio $svcName" "fail" $s.Status }
     }
 
     Write-Host ""
@@ -1054,7 +1222,7 @@ function Show-SystemInfo {
     msg_info "Usuario        : $env:USERNAME"
     msg_info "Fecha/Hora     : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     msg_info "PowerShell     : $($PSVersionTable.PSVersion)"
-    msg_info "OS             : $((Get-WmiObject Win32_OperatingSystem).Caption)"
+    msg_info "OS             : $((Get-CimInstance -ClassName Win32_OperatingSystem).Caption)"
     Write-Host ""
 
     if ($script:AD_DOMAIN) {
@@ -1065,19 +1233,21 @@ function Show-SystemInfo {
 
         # Estadisticas del dominio
         try {
-            $users  = @(Get-ADUser   -Filter * -SearchBase $script:AD_DOMAIN_DN -ErrorAction Stop).Count
+            $users = @(Get-ADUser   -Filter * -SearchBase $script:AD_DOMAIN_DN -ErrorAction Stop).Count
             $groups = @(Get-ADGroup  -Filter * -SearchBase $script:AD_DOMAIN_DN -ErrorAction Stop).Count
-            $ous    = @(Get-ADOrganizationalUnit -Filter * -SearchBase $script:AD_DOMAIN_DN -ErrorAction Stop).Count
-            $comps  = @(Get-ADComputer -Filter * -SearchBase $script:AD_DOMAIN_DN -ErrorAction Stop).Count
+            $ous = @(Get-ADOrganizationalUnit -Filter * -SearchBase $script:AD_DOMAIN_DN -ErrorAction Stop).Count
+            $comps = @(Get-ADComputer -Filter * -SearchBase $script:AD_DOMAIN_DN -ErrorAction Stop).Count
 
             msg_info "Usuarios AD    : $users"
             msg_info "Grupos AD      : $groups"
             msg_info "OUs            : $ous"
             msg_info "Equipos AD     : $comps"
-        } catch {
+        }
+        catch {
             msg_alert "No se pudieron obtener estadisticas de AD."
         }
-    } else {
+    }
+    else {
         msg_alert "No hay conexion activa al dominio."
     }
 
@@ -1085,18 +1255,19 @@ function Show-SystemInfo {
 
     # Recursos del servidor
     try {
-        $cpu  = (Get-WmiObject Win32_Processor).LoadPercentage
-        $ram  = Get-WmiObject Win32_OperatingSystem
-        $ramUsed  = [Math]::Round(($ram.TotalVisibleMemorySize - $ram.FreePhysicalMemory) / 1MB, 1)
+        $cpu = (Get-CimInstance -ClassName Win32_Processor).LoadPercentage
+        $ram = Get-CimInstance -ClassName Win32_OperatingSystem
+        $ramUsed = [Math]::Round(($ram.TotalVisibleMemorySize - $ram.FreePhysicalMemory) / 1MB, 1)
         $ramTotal = [Math]::Round($ram.TotalVisibleMemorySize / 1MB, 1)
         $disk = Get-PSDrive C
-        $diskFree  = [Math]::Round($disk.Free / 1GB, 1)
-        $diskUsed  = [Math]::Round($disk.Used / 1GB, 1)
+        $diskFree = [Math]::Round($disk.Free / 1GB, 1)
+        $diskUsed = [Math]::Round($disk.Used / 1GB, 1)
 
         msg_info "CPU            : $cpu%"
         msg_info "RAM            : $ramUsed GB / $ramTotal GB"
         msg_info "Disco C:       : $diskUsed GB usados, $diskFree GB libres"
-    } catch {}
+    }
+    catch {}
 
     if ($script:LOG_PATH) {
         Write-Host ""
@@ -1104,7 +1275,8 @@ function Show-SystemInfo {
         try {
             $logSize = [Math]::Round((Get-Item $script:LOG_PATH).Length / 1KB, 1)
             msg_info "Tamano del log : $logSize KB"
-        } catch {}
+        }
+        catch {}
     }
 
     msg_pause
@@ -1122,12 +1294,14 @@ function Invoke-MenuOption {
 
     try {
         & $Action
-    } catch {
+    }
+    catch {
         Write-Host ""
         if (Get-Command 'Write-Log' -ErrorAction SilentlyContinue) {
             Write-Log ERROR "Error no capturado en '$OptionName': $_"
             Write-Log ERROR "StackTrace: $($_.ScriptStackTrace)"
-        } else {
+        }
+        else {
             Write-Host "[ ERROR ] Error en '$OptionName': $_" -ForegroundColor Red
         }
         Write-Host ""
@@ -1169,7 +1343,7 @@ function Start-ACManager {
                 Invoke-MenuOption 'Gestion AD' {
                     # Si no hay OUs personalizadas, correr setup primero
                     $ous = @(Get-ADOrganizationalUnit -Filter * -ErrorAction SilentlyContinue |
-                             Where-Object { $_.Name -ne 'Domain Controllers' })
+                        Where-Object { $_.Name -ne 'Domain Controllers' })
                     if ($ous.Count -eq 0) {
                         msg_alert "No hay Unidades Organizativas en el dominio."
                         msg_info  "Primero debes crear las OUs y grupos de seguridad."
@@ -1214,12 +1388,23 @@ function Start-ACManager {
                 }
             }
 
+            'P' {
+                Invoke-MenuOption 'Perfiles Moviles' {
+                    if (-not $script:AD_DOMAIN_DN) {
+                        Write-Log WARN "Conecta al dominio primero (opcion C)."
+                        msg_pause; return
+                    }
+                    Invoke-RoamingMenu
+                }
+            }
+
             # ── Parte 2 ───────────────────────────────────────────────────────
             '5' {
                 Invoke-MenuOption 'RBAC' {
                     if (Get-Command 'Invoke-RBACMenu' -ErrorAction SilentlyContinue) {
                         Invoke-RBACMenu
-                    } else {
+                    }
+                    else {
                         msg_alert "El modulo RBAC (Parte 2) no esta disponible."
                         msg_info  "Copia ac_lib/ac_rbac.ps1 y reinicia AC Manager."
                         msg_pause
@@ -1231,7 +1416,8 @@ function Start-ACManager {
                 Invoke-MenuOption 'FGPP' {
                     if (Get-Command 'Invoke-FGPPMenu' -ErrorAction SilentlyContinue) {
                         Invoke-FGPPMenu
-                    } else {
+                    }
+                    else {
                         msg_alert "El modulo FGPP (Parte 2) no esta disponible."
                         msg_info  "Copia ac_lib/ac_fgpp.ps1 y reinicia AC Manager."
                         msg_pause
@@ -1243,7 +1429,8 @@ function Start-ACManager {
                 Invoke-MenuOption 'Auditoria' {
                     if (Get-Command 'Invoke-AuditMenu' -ErrorAction SilentlyContinue) {
                         Invoke-AuditMenu
-                    } else {
+                    }
+                    else {
                         msg_alert "El modulo de Auditoria (Parte 2) no esta disponible."
                         msg_info  "Copia ac_lib/ac_audit.ps1 y reinicia AC Manager."
                         msg_pause
@@ -1255,7 +1442,8 @@ function Start-ACManager {
                 Invoke-MenuOption 'MFA' {
                     if (Get-Command 'Invoke-MFAMenu' -ErrorAction SilentlyContinue) {
                         Invoke-MFAMenu
-                    } else {
+                    }
+                    else {
                         msg_alert "El modulo MFA (Parte 2) no esta disponible."
                         msg_info  "Copia ac_lib/ac_mfa.ps1 y reinicia AC Manager."
                         msg_pause
@@ -1374,20 +1562,22 @@ $_baseMods = @(
 
 $_loadFailed = @()
 foreach ($_entry in $_baseMods) {
-    $_parts    = $_entry -split '\|'
-    $_path     = $_parts[0]
-    $_name     = $_parts[1]
+    $_parts = $_entry -split '\|'
+    $_path = $_parts[0]
+    $_name = $_parts[1]
     $_optional = $_parts[2] -eq '1'
 
     if (Test-Path $_path) {
         try {
             . $_path
             Write-Host "  [  OK  ] $_name"
-        } catch {
+        }
+        catch {
             Write-Host "  [  ERR ] $_name : $_"
             if (-not $_optional) { $_loadFailed += $_name }
         }
-    } else {
+    }
+    else {
         Write-Host "  [  --- ] $_name : no encontrado en $_path"
         $_loadFailed += $_name
     }
@@ -1425,6 +1615,7 @@ $_adMods = @(
     "$script:AC_LIB_PATH\ac_logon.ps1|Logon|0"
     "$script:AC_LIB_PATH\ac_fsrm.ps1|FSRM|0"
     "$script:AC_LIB_PATH\ac_applocker.ps1|AppLocker|0"
+    "$script:AC_LIB_PATH\ac_roaming.ps1|Roaming|0"
     "$script:AC_LIB_PATH\ac_rbac.ps1|RBAC|1"
     "$script:AC_LIB_PATH\ac_fgpp.ps1|FGPP|1"
     "$script:AC_LIB_PATH\ac_audit.ps1|Audit|1"
@@ -1433,23 +1624,26 @@ $_adMods = @(
 
 $_loadFailed = @()
 foreach ($_entry in $_adMods) {
-    $_parts    = $_entry -split '\|'
-    $_path     = $_parts[0]
-    $_name     = $_parts[1]
+    $_parts = $_entry -split '\|'
+    $_path = $_parts[0]
+    $_name = $_parts[1]
     $_optional = $_parts[2] -eq '1'
 
     if (Test-Path $_path) {
         try {
             . $_path
             Write-Host "  [  OK  ] $_name"
-        } catch {
+        }
+        catch {
             Write-Host "  [  ERR ] $_name : $_"
             if (-not $_optional) { $_loadFailed += $_name }
         }
-    } else {
+    }
+    else {
         if ($_optional) {
             Write-Host "  [  N/D ] $_name (no disponible)"
-        } else {
+        }
+        else {
             Write-Host "  [  --- ] $_name : no encontrado en $_path"
             $_loadFailed += $_name
         }

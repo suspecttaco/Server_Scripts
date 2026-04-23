@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ac_lib/ac_csv.ps1 — Lectura, validacion y distribucion de usuarios desde CSV
+# ac_lib/ac_csv.ps1 - Lectura, validacion y distribucion de usuarios desde CSV
 # Uso: . .\ac_lib\ac_csv.ps1
 # Requiere: lib/ui.ps1, lib/input.ps1, ac_lib/ac_log.ps1, ac_lib/ac_ad.ps1
 # =============================================================================
@@ -92,7 +92,7 @@ function Invoke-ColumnMapping {
         } | Select-Object -First 1
 
         if ($autoMatch) {
-            msg_info "Campo '$label' — autodetectado: '$autoMatch'"
+            msg_info "Campo '$label' - autodetectado: '$autoMatch'"
             $confirm = Read-Confirm -Prompt "Usar columna '$autoMatch' para '$label'" -Default 'S'
             if ($confirm) {
                 $mapping[$field] = $autoMatch
@@ -101,7 +101,7 @@ function Invoke-ColumnMapping {
             }
         }
 
-        # Seleccion manual — (omitir) va AL FINAL para no desplazar los numeros de columna
+        # Seleccion manual - (omitir) va AL FINAL para no desplazar los numeros de columna
         $options = [System.Collections.Generic.List[string]]($CsvColumns)
         if (-not $required) { $options.Add('(omitir este campo)') }
 
@@ -132,12 +132,12 @@ function Invoke-ColumnMapping {
     msg_info "Valores validos en esa columna deben coincidir con los nombres de las OUs existentes."
     Write-Host ""
 
-    # Mostrar OUs disponibles — advertir si solo hay OUs de sistema
+    # Mostrar OUs disponibles - advertir si solo hay OUs de sistema
     $customOUs = $AvailableOUs | Where-Object { $_ -notmatch 'Domain Controllers|Builtin|ForeignSecurityPrincipals|Managed Service Accounts' }
     if ($customOUs.Count -eq 0) {
         Write-Host ""
         msg_alert "ATENCION: No se encontraron OUs personalizadas en el dominio."
-        msg_alert "Solo existe 'Domain Controllers' — debes crear las OUs primero."
+        msg_alert "Solo existe 'Domain Controllers' - debes crear las OUs primero."
         msg_info  "Ve al menu principal -> [1] Gestion AD -> crear OUs (Cuates, NoCuates)."
         Write-Host ""
         $continue = Read-Confirm -Prompt "Continuar de todas formas" -Default "N"
@@ -235,7 +235,7 @@ function Test-CSVRow {
         }
     }
 
-    # Password — solo validar que no este vacio; complejidad se valida al crear
+    # Password - solo validar que no este vacio; complejidad se valida al crear
     if ($Mapping['Password']) {
         $v = $Row.($Mapping['Password'])
         if ([string]::IsNullOrWhiteSpace($v)) {
@@ -245,7 +245,7 @@ function Test-CSVRow {
         }
     }
 
-    # OUTarget — no puede estar vacio
+    # OUTarget - no puede estar vacio
     if ($Mapping['OUTarget']) {
         $v = $Row.($Mapping['OUTarget'])
         if ([string]::IsNullOrWhiteSpace($v)) {
@@ -253,7 +253,7 @@ function Test-CSVRow {
         }
     }
 
-    # Email — solo si esta mapeado y tiene valor
+    # Email - solo si esta mapeado y tiene valor
     if ($Mapping['Email']) {
         $v = $Row.($Mapping['Email'])
         if (-not [string]::IsNullOrWhiteSpace($v) -and $v -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
@@ -553,7 +553,7 @@ function Invoke-CSVUserImport {
     msg_alert  "  Omitidos         : $($stats.Skipped)"
     msg_error  "  Fallidos         : $($stats.Failed)"
 
-    Write-Log INFO "Importacion CSV finalizada — Creados: $($stats.Created) | Omitidos: $($stats.Skipped) | Fallidos: $($stats.Failed)"
+    Write-Log INFO "Importacion CSV finalizada - Creados: $($stats.Created) | Omitidos: $($stats.Skipped) | Fallidos: $($stats.Failed)"
 
     return $stats
 }
@@ -671,7 +671,7 @@ function Test-GroupsPopulated {
         foreach ($grp in $groups) {
             $count = @(Get-ADGroupMember -Identity $grp.Name -ErrorAction Stop).Count
             if ($count -eq 0) {
-                Write-Log WARN "Grupo '$($grp.Name)' esta vacio — se requiere re-importacion."
+                Write-Log WARN "Grupo '$($grp.Name)' esta vacio - se requiere re-importacion."
                 return $false
             }
         }
@@ -700,7 +700,7 @@ function Invoke-CSVMenu {
 
     while ($true) {
         Write-Host ""
-        draw_header "Gestion de Usuarios — CSV / Manual"
+        draw_header "Gestion de Usuarios - CSV / Manual"
 
         $sel = Read-Selection `
             -Prompt "Selecciona una opcion" `

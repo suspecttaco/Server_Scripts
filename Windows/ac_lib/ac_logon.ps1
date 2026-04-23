@@ -1,5 +1,5 @@
 ﻿# =============================================================================
-# ac_lib/ac_logon.ps1 — Control de acceso temporal: Logon Hours + GPO
+# ac_lib/ac_logon.ps1 - Control de acceso temporal: Logon Hours + GPO
 # Uso: . .\ac_lib\ac_logon.ps1
 # Requiere: lib/ui.ps1, lib/input.ps1, ac_lib/ac_log.ps1, ac_lib/ac_ad.ps1
 # =============================================================================
@@ -8,7 +8,7 @@
 #Requires -Module GroupPolicy
 
 # -----------------------------------------------------------------------------
-# NOTAS TECNICAS — Formato de 21 bytes para Logon Hours
+# NOTAS TECNICAS - Formato de 21 bytes para Logon Hours
 # -----------------------------------------------------------------------------
 # Active Directory representa las horas de logon como un arreglo de 21 bytes
 # (168 bits = 7 dias x 24 horas).
@@ -390,7 +390,7 @@ function Set-LogonHoursGroup {
 # Clear-LogonHours
 # Elimina las restricciones de horario de un usuario o todos los miembros
 # de un grupo. Util para probar AppLocker sin que LogonHours interfiera.
-# Usa DirectoryEntry.Properties["logonHours"].Clear() — mismo metodo que
+# Usa DirectoryEntry.Properties["logonHours"].Clear() - mismo metodo que
 # Set-LogonHoursUser pero en sentido inverso.
 #
 # Parametros:
@@ -514,10 +514,9 @@ function New-ForceLogoffGPO {
         Write-Log INFO "GPO existente encontrada: $GPOName"
     } catch {
         try {
-            $gpo = Invoke-Logged "Crear GPO: $GPOName" {
-                New-GPO -Name $GPOName -ErrorAction Stop
-            } -PassThru $true
-            # Extraer el objeto GPO del resultado
+            Invoke-Logged "Crear GPO: $GPOName" {
+                New-GPO -Name $GPOName -ErrorAction Stop | Out-Null
+            } | Out-Null
             $gpo = Get-GPO -Name $GPOName -ErrorAction Stop
             Write-Log SUCCESS "GPO creada: $GPOName"
         } catch {
@@ -553,7 +552,7 @@ function New-ForceLogoffGPO {
         return $false
     }
 
-    # Segunda clave requerida para Windows 10 — sin esta, LanManServer
+    # Segunda clave requerida para Windows 10 - sin esta, LanManServer
     # sola no es suficiente para forzar el logoff en clientes Win10.
     try {
         Invoke-Logged "Configurar ForceLogoffWhenHourExpire en GPO: $GPOName" {
@@ -570,7 +569,7 @@ function New-ForceLogoffGPO {
         Write-Log WARN "No se pudo configurar ForceLogoffWhenHourExpire (no critico): $_"
     }
 
-    # Vincular la GPO a la OU — verificar primero con Get-GPInheritance
+    # Vincular la GPO a la OU - verificar primero con Get-GPInheritance
     $alreadyLinked = $false
     try {
         $links = Get-GPInheritance -Target $OuDN -ErrorAction SilentlyContinue |
@@ -619,7 +618,7 @@ function New-ForceLogoffGPO {
 function Invoke-LogonHoursMenu {
     while ($true) {
         Write-Host ""
-        draw_header "Control de Acceso Temporal — Logon Hours"
+        draw_header "Control de Acceso Temporal - Logon Hours"
 
         $sel = Read-Selection `
             -Prompt "Selecciona una opcion" `

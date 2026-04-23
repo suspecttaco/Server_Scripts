@@ -1,16 +1,14 @@
 ﻿# =============================================================================
-# ac_lib/ac_fsrm.ps1 — Gestion de FSRM: cuotas, file screening, carpetas home
+# ac_lib/ac_fsrm.ps1 - Gestion de FSRM: cuotas, file screening, carpetas home
 # Uso: . .\ac_lib\ac_fsrm.ps1
 # Requiere: lib/ui.ps1, lib/input.ps1, ac_lib/ac_log.ps1, ac_lib/ac_ad.ps1
 # =============================================================================
 
 #Requires -Module ActiveDirectory
 
-# Importar modulo FSRM si esta disponible
-if (Get-Module -ListAvailable -Name FileServerResourceManager) {
-    Import-Module FileServerResourceManager -ErrorAction Stop
-} else {
-    throw "El modulo FileServerResourceManager no esta disponible. Verifica que el rol FS-Resource-Manager este instalado."
+# Importar modulo FSRM si esta disponible (no lanzar excepcion - se instala bajo demanda)
+if (Get-Module -ListAvailable -Name FileServerResourceManager -ErrorAction SilentlyContinue) {
+    Import-Module FileServerResourceManager -ErrorAction SilentlyContinue
 }
 
 # -----------------------------------------------------------------------------
@@ -26,6 +24,54 @@ $script:FSRM_DEFAULT_BLOCKED = @('.mp3','.mp4','.avi','.mkv','.mov','.wmv',
                                   '.flv','.wav','.aac','.ogg','.wma',
                                   '.exe','.msi','.bat','.cmd','.vbs','.ps1',
                                   '.dll','.scr','.com','.pif')
+
+# Ruta del archivo de configuracion persistente del modulo
+$script:AC_FSRM_CONFIG_FILE = "$env:ProgramData\AC_Manager\fsrm_config.json"
+
+# -----------------------------------------------------------------------------
+# Save-FSRMConfig / Load-FSRMConfig
+# Persisten FSRM_HOMES_ROOT y FSRM_REPORT_PATH en disco para que el watcher
+# y otras sesiones los recuperen sin intervencion del usuario.
+# -----------------------------------------------------------------------------
+function Save-FSRMConfig {
+    $dir = Split-Path $script:AC_FSRM_CONFIG_FILE
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $cfg = @{
+        HomesRoot  = $script:FSRM_HOMES_ROOT
+        ReportPath = $script:FSRM_REPORT_PATH
+    }
+    $cfg | ConvertTo-Json | Set-Content -Path $script:AC_FSRM_CONFIG_FILE -Encoding UTF8
+    Write-Log INFO "Configuracion FSRM guardada: $script:AC_FSRM_CONFIG_FILE"
+}
+
+function Import-FSRMConfig {
+    if (-not (Test-Path $script:AC_FSRM_CONFIG_FILE)) { return $false }
+    try {
+        $cfg = Get-Content $script:AC_FSRM_CONFIG_FILE -Raw | ConvertFrom-Json
+        if (-not [string]::IsNullOrWhiteSpace($cfg.HomesRoot)) {
+            $script:FSRM_HOMES_ROOT  = $cfg.HomesRoot
+        }
+        if (-not [string]::IsNullOrWhiteSpace($cfg.ReportPath)) {
+            $script:FSRM_REPORT_PATH = $cfg.ReportPath
+        }
+        # Write-Log puede no estar disponible si ac_log.ps1 aun no se cargo
+        if (Get-Command 'Write-Log' -ErrorAction SilentlyContinue) {
+            Write-Log INFO "Configuracion FSRM cargada: HomesRoot=$script:FSRM_HOMES_ROOT"
+        }
+        return $true
+    }
+    catch {
+        if (Get-Command 'Write-Log' -ErrorAction SilentlyContinue) {
+            Write-Log WARN "No se pudo leer la configuracion FSRM guardada: $_"
+        }
+        return $false
+    }
+}
+
+# Cargar configuracion persistida al importar el modulo (silencioso si no existe)
+Import-FSRMConfig | Out-Null
 
 # -----------------------------------------------------------------------------
 # Test-FSRMInstalled
@@ -197,6 +243,7 @@ function Initialize-FSRMPaths {
     }
 
     Write-Log SUCCESS "Rutas de FSRM configuradas correctamente."
+    Save-FSRMConfig
     return $true
 }
 
@@ -253,7 +300,7 @@ function New-UserHomeFolder {
             $acl.AddAccessRule($systemRule)
 
             # Regla para Administrators via SID universal S-1-5-32-544.
-            # NO usar el string "Administrators" — en DCs en español el grupo
+            # NO usar el string "Administrators" - en DCs en español el grupo
             # se llama "Administradores" y el nombre en ingles causa
             # IdentityNotMappedException al crear la regla ACL.
             $adminSid  = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
@@ -402,7 +449,7 @@ function New-ACQuotaTemplate {
             New-FsrmQuotaTemplate @templateParams
         } | Out-Null
 
-        Write-Log SUCCESS "Plantilla de cuota creada: $TemplateName — $SizeMB MB $(if ($HardQuota) { '[HARD]' } else { '[SOFT]' })"
+        Write-Log SUCCESS "Plantilla de cuota creada: $TemplateName - $SizeMB MB $(if ($HardQuota) { '[HARD]' } else { '[SOFT]' })"
         return $TemplateName
     } catch {
         Write-Log ERROR "No se pudo crear la plantilla de cuota '$TemplateName': $_"
@@ -430,7 +477,7 @@ function Set-FSRMQuotaOnFolder {
         [bool]   $HardQuota    = $true
     )
 
-    # Verificar si ya tiene cuota — actualizar en lugar de eliminar y recrear
+    # Verificar si ya tiene cuota - actualizar en lugar de eliminar y recrear
     $existing = Get-FsrmQuota -Path $FolderPath -ErrorAction SilentlyContinue
     if ($existing) {
         if ($TemplateName) {
@@ -706,8 +753,8 @@ function Invoke-FSRMGroupSetup {
     $screenTypeSel = Read-Selection `
         -Prompt "Tipo de apantallamiento de archivos" `
         -Options @(
-            "Active Screening — Bloqueo real (RECOMENDADO para la rubrica)",
-            "Passive Screening — Solo registro en log, no bloquea"
+            "Active Screening - Bloqueo real (RECOMENDADO para la rubrica)",
+            "Passive Screening - Solo registro en log, no bloquea"
         )
     if ($screenTypeSel -eq $false) { return $false }
     $activeScreening = ($screenTypeSel.Index -eq 0)
@@ -777,8 +824,8 @@ function Invoke-FSRMGroupSetup {
         $quotaTypeSel = Read-Selection `
             -Prompt "Tipo de cuota para '$groupName'" `
             -Options @(
-                "Hard Quota — Bloquea escritura al alcanzar el limite (RECOMENDADO)",
-                "Soft Quota — Solo alerta, permite seguir escribiendo"
+                "Hard Quota - Bloquea escritura al alcanzar el limite (RECOMENDADO)",
+                "Soft Quota - Solo alerta, permite seguir escribiendo"
             )
         if ($quotaTypeSel -eq $false) { continue }
         $isHard = ($quotaTypeSel.Index -eq 0)
@@ -945,13 +992,309 @@ function Get-ACStorageReport {
 }
 
 # -----------------------------------------------------------------------------
+# Sync-RoamingProfileQuotas
+# Aplica cuotas FSRM + file screen + permisos NTFS a TODAS las subcarpetas
+# de $script:FSRM_HOMES_ROOT, incluyendo carpetas .V6 creadas por Windows
+# al primer logon. Se llama manualmente o desde la tarea programada.
+#
+# Logica de permisos (icacls - identica a referencia utilsAD.ps1):
+#   1. takeown /a -> toma posesion como Administradores para poder modificar ACL
+#   2. icacls /grant:r -> user=Full, SYSTEM=Full, CREATOR OWNER=Full, Admin=Read
+#   3. icacls /setowner -> devuelve la posesion al usuario
+#
+# Devuelve: $true | $false
+# -----------------------------------------------------------------------------
+function Sync-RoamingProfileQuotas {
+    if ([string]::IsNullOrWhiteSpace($script:FSRM_HOMES_ROOT) -or
+        -not (Test-Path $script:FSRM_HOMES_ROOT)) {
+        Write-Log ERROR "FSRM_HOMES_ROOT no configurado o no existe. Ejecuta la opcion de rutas primero."
+        return $false
+    }
+
+    if (-not (Get-Command New-FsrmQuota -ErrorAction SilentlyContinue)) {
+        Write-Log WARN "Modulo FSRM no disponible. Importando..."
+        Import-Module FileServerResourceManager -ErrorAction SilentlyContinue
+        if (-not (Get-Command New-FsrmQuota -ErrorAction SilentlyContinue)) {
+            Write-Log ERROR "No se pudo importar el modulo FSRM."
+            return $false
+        }
+    }
+
+    $allFolders = @(Get-ChildItem $script:FSRM_HOMES_ROOT -Directory -ErrorAction SilentlyContinue)
+
+    if ($allFolders.Count -eq 0) {
+        Write-Log INFO "No se encontraron subcarpetas en $script:FSRM_HOMES_ROOT."
+        return $true
+    }
+
+    Write-Log INFO "Sync-RoamingProfileQuotas: $($allFolders.Count) carpeta(s) encontradas."
+
+    $domainNetBIOS = $env:USERDOMAIN
+    $quotaCount = 0; $permCount = 0
+
+    foreach ($folder in $allFolders) {
+        # Extraer nombre de usuario (quitar sufijo .V6 si existe)
+        $userName = $folder.Name -replace '\.V6$', ''
+        $userSid  = "${domainNetBIOS}\${userName}"
+
+        Write-Log INFO "Procesando: $($folder.Name) -> usuario: $userName"
+
+        # Validar que el usuario existe en AD
+        try {
+            $adUser = Get-ADUser $userName -Properties MemberOf -ErrorAction Stop
+        }
+        catch {
+            Write-Log WARN "Usuario '$userName' no existe en AD. Omitiendo."
+            continue
+        }
+
+        # --- Permisos NTFS via icacls (takeown + grant:r + setowner) ---
+        & takeown /f $folder.FullName /a /r 2>&1 | Out-Null
+
+        & icacls $folder.FullName /grant:r `
+            "${userSid}:(OI)(CI)F" `
+            "NT AUTHORITY\SYSTEM:(OI)(CI)F" `
+            "CREATOR OWNER:(OI)(CI)F" `
+            "*S-1-5-32-544:(OI)(CI)RX" `
+            /T /C /Q 2>&1 | Out-Null
+
+        & icacls $folder.FullName /setowner $userSid /T /C /Q 2>&1 | Out-Null
+
+        Write-Log SUCCESS "Permisos NTFS aplicados: $($folder.FullName) (usuario=owner, admin=read)"
+        $permCount++
+
+        # --- Determinar cuota segun grupo AD ---
+        $quotaSize  = $null
+        $quotaLabel = $null
+        $grupos = @($adUser.MemberOf | ForEach-Object { ($_ -split ',')[0] -replace '^CN=', '' })
+
+        if ($grupos -contains 'GRP_Cuates') {
+            $quotaSize  = [int64](10 * 1MB)
+            $quotaLabel = '10MB (Cuates)'
+        }
+        elseif ($grupos -contains 'GRP_NoCuates') {
+            $quotaSize  = [int64](5 * 1MB)
+            $quotaLabel = '5MB (NoCuates)'
+        }
+        else {
+            Write-Log WARN "  '$userName' no pertenece a GRP_Cuates ni GRP_NoCuates. Sin cuota."
+        }
+
+        # --- Aplicar cuota FSRM con umbrales 85% y 100% ---
+        if ($quotaSize) {
+            try {
+                $qWarnAction  = New-FsrmAction -Type Event -EventType Warning `
+                    -Body "Advertencia: [Source Io Owner] alcanzo el [Quota Threshold]% en [Quota Path] ([Quota Used MB]MB/[Quota Limit MB]MB)." `
+                    -RunLimitInterval 1 -ErrorAction Stop
+
+                $qLimitAction = New-FsrmAction -Type Event -EventType Error `
+                    -Body "LIMITE: [Source Io Owner] agoto su cuota en [Quota Path] ([Quota Limit MB]MB). No se permiten mas escrituras." `
+                    -RunLimitInterval 1 -ErrorAction Stop
+
+                $th85  = New-FsrmQuotaThreshold -Percentage 85  -Action $qWarnAction  -ErrorAction Stop
+                $th100 = New-FsrmQuotaThreshold -Percentage 100 -Action $qLimitAction -ErrorAction Stop
+
+                $existing = Get-FsrmQuota -Path $folder.FullName -ErrorAction SilentlyContinue
+                if ($existing) {
+                    Set-FsrmQuota -Path $folder.FullName -Size $quotaSize `
+                        -Threshold $th85, $th100 -ErrorAction Stop
+                    Write-Log SUCCESS "  Cuota actualizada: $quotaLabel"
+                }
+                else {
+                    New-FsrmQuota -Path $folder.FullName -Size $quotaSize `
+                        -Threshold $th85, $th100 -ErrorAction Stop
+                    Write-Log SUCCESS "  Cuota aplicada: $quotaLabel"
+                }
+                $quotaCount++
+            }
+            catch {
+                Write-Log ERROR "  Error al aplicar cuota en '$($folder.FullName)': $_"
+            }
+        }
+
+        # --- Aplicar File Screen solo en carpetas de redireccion (sin .V6) ---
+        # Las carpetas .V6 contienen NTUSER.DAT y archivos de sistema del perfil:
+        # aplicar file screen ahi bloquea la sincronizacion en logout.
+        # Las carpetas sin .V6 son las de Folder Redirection (Documents, Desktop,
+        # Pictures) donde el usuario escribe en tiempo real -> FSRM bloquea ahi.
+        if ($folder.Name -notmatch '\.V6$') {
+            $screenTemplate    = 'Pantalla-Prohibidos-T08'
+            $fallbackFileGroup = 'Archivos-Prohibidos-T08'
+            try {
+                $existingScreen = Get-FsrmFileScreen -Path $folder.FullName -ErrorAction SilentlyContinue
+                if (-not $existingScreen) {
+                    $tmpl = Get-FsrmFileScreenTemplate -Name $screenTemplate -ErrorAction SilentlyContinue
+                    if ($tmpl) {
+                        New-FsrmFileScreen -Path $folder.FullName -Template $screenTemplate -ErrorAction Stop
+                        Write-Log SUCCESS "  File Screen aplicado (template: $screenTemplate)"
+                    }
+                    else {
+                        $fg = Get-FsrmFileGroup -Name $fallbackFileGroup -ErrorAction SilentlyContinue
+                        if ($fg) {
+                            New-FsrmFileScreen -Path $folder.FullName `
+                                -IncludeGroup @($fallbackFileGroup) -Active -ErrorAction Stop
+                            Write-Log WARN "  File Screen aplicado (fallback grupo: $fallbackFileGroup)"
+                        }
+                        else {
+                            Write-Log WARN "  Template '$screenTemplate' y grupo '$fallbackFileGroup' no existen. Ejecuta Invoke-RoamingMenu primero."
+                        }
+                    }
+                }
+                else {
+                    Write-Log INFO "  File Screen ya existe en $($folder.FullName)."
+                }
+            }
+            catch {
+                Write-Log WARN "  No se pudo aplicar File Screen en '$($folder.FullName)': $_"
+            }
+        }
+        else {
+            Write-Log INFO "  Carpeta de perfil (.V6): file screen omitido para no interferir con sync."
+        }
+    }
+
+    Write-Log SUCCESS "Sync completado -> Carpetas: $($allFolders.Count) | Permisos: $permCount | Cuotas: $quotaCount"
+    return $true
+}
+
+# -----------------------------------------------------------------------------
+# Register-RoamingProfileWatcher
+# Genera un script FileSystemWatcher y lo registra como tarea programada
+# persistente (SYSTEM, sin limite de tiempo). Detecta la creacion de nuevas
+# carpetas .V6 en FSRM_HOMES_ROOT y aplica permisos + cuota + file screen
+# en tiempo real (latencia < 10 s). Idempotente.
+#
+# Devuelve: $true | $false
+# -----------------------------------------------------------------------------
+function Register-RoamingProfileWatcher {
+    $taskName      = 'Sync-RoamingProfileV6'
+    $watcherDir    = "$env:ProgramData\AC_Manager"
+    $watcherScript = "$watcherDir\fsrm_watcher.ps1"
+
+    # Localizar ac_fsrm.ps1 en tiempo de ejecucion
+    $scriptPath = $PSCommandPath
+    if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+        $scriptPath = $MyInvocation.ScriptName
+    }
+    if ([string]::IsNullOrWhiteSpace($scriptPath) -or -not (Test-Path $scriptPath)) {
+        Write-Log ERROR "No se pudo localizar ac_fsrm.ps1 para el watcher."
+        return $false
+    }
+
+    $fsrmEsc   = $scriptPath -replace "'", "''"
+
+    # Crear directorio de soporte
+    if (-not (Test-Path $watcherDir)) {
+        New-Item -ItemType Directory -Path $watcherDir -Force | Out-Null
+    }
+
+    # Ruta del archivo de configuracion persistente (debe coincidir con $script:AC_FSRM_CONFIG_FILE)
+    $configFileEsc = "$env:ProgramData\AC_Manager\fsrm_config.json" -replace "'", "''"
+
+    # Generar script del watcher usando WaitForChanged (sincrono, mismo scope)
+    $watcherContent = @"
+# fsrm_watcher.ps1 - generado automaticamente por AC_Manager
+# Detecta carpetas .V6 nuevas y aplica FSRM en tiempo real.
+
+`$fsrmScript  = '$fsrmEsc'
+`$configFile  = '$configFileEsc'
+
+. `$fsrmScript
+
+# Recuperar HomesRoot desde el archivo de configuracion persistente
+if (Test-Path `$configFile) {
+    try {
+        `$cfg = Get-Content `$configFile -Raw | ConvertFrom-Json
+        if (-not [string]::IsNullOrWhiteSpace(`$cfg.HomesRoot)) {
+            `$script:FSRM_HOMES_ROOT = `$cfg.HomesRoot
+        }
+    } catch {}
+}
+
+if ([string]::IsNullOrWhiteSpace(`$script:FSRM_HOMES_ROOT)) {
+    Write-EventLog -LogName Application -Source 'AC_Manager' -EventId 9001 -EntryType Error `
+        -Message 'fsrm_watcher: FSRM_HOMES_ROOT no configurado. El watcher no puede continuar.' `
+        -ErrorAction SilentlyContinue
+    exit 1
+}
+
+`$watcher = New-Object System.IO.FileSystemWatcher
+`$watcher.Path                  = `$script:FSRM_HOMES_ROOT
+`$watcher.IncludeSubdirectories = `$false
+`$watcher.NotifyFilter          = [System.IO.NotifyFilters]::DirectoryName
+
+while (`$true) {
+    `$change = `$watcher.WaitForChanged([System.IO.WatcherChangeTypes]::Created, 5000)
+    if (-not `$change.TimedOut) {
+        Start-Sleep -Seconds 3
+        Sync-RoamingProfileQuotas | Out-Null
+    }
+}
+"@
+
+    try {
+        [System.IO.File]::WriteAllText(
+            $watcherScript,
+            $watcherContent,
+            (New-Object System.Text.UTF8Encoding $true)
+        )
+        Write-Log INFO "Script watcher generado: $watcherScript"
+    }
+    catch {
+        Write-Log ERROR "No se pudo escribir el script watcher: $_"
+        return $false
+    }
+
+    # Eliminar tarea previa si existe
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Write-Log INFO "Tarea previa '$taskName' eliminada para actualizar."
+    }
+
+    try {
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$watcherScript`""
+
+        $triggers = @(
+            (New-ScheduledTaskTrigger -AtStartup),
+            (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10))
+        )
+
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' `
+            -LogonType ServiceAccount -RunLevel Highest
+
+        $settings = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable `
+            -ExecutionTimeLimit ([timespan]::Zero) `
+            -RestartCount 5 `
+            -RestartInterval (New-TimeSpan -Minutes 5)
+
+        Register-ScheduledTask -TaskName $taskName `
+            -Action $action -Trigger $triggers `
+            -Principal $principal -Settings $settings `
+            -Description "FileSystemWatcher: detecta carpetas .V6 nuevas y aplica FSRM en tiempo real" `
+            -ErrorAction Stop | Out-Null
+
+        Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        Write-Log SUCCESS "Watcher '$taskName' activo (tiempo real via FileSystemWatcher)."
+        return $true
+    }
+    catch {
+        Write-Log ERROR "Error al registrar watcher '$taskName': $_"
+        return $false
+    }
+}
+
+# -----------------------------------------------------------------------------
 # Invoke-FSRMMenu
 # Menu del modulo para integracion con ac_manager.ps1
 # -----------------------------------------------------------------------------
 function Invoke-FSRMMenu {
     while ($true) {
         Write-Host ""
-        draw_header "Gestion de Almacenamiento — FSRM"
+        draw_header "Gestion de Almacenamiento - FSRM"
 
         $sel = Read-Selection `
             -Prompt "Selecciona una opcion" `
@@ -963,7 +1306,9 @@ function Invoke-FSRMMenu {
                 "Crear/modificar grupo de archivos bloqueados",
                 "Aplicar file screen a una carpeta especifica",
                 "Generar reporte de almacenamiento",
-                "Ver estado actual de cuotas"
+                "Ver estado actual de cuotas",
+                "Sincronizar cuotas y permisos en carpetas .V6",
+                "Registrar tarea programada de sincronizacion (.V6 cada 5 min)"
             ) `
             -AllowBack $true
 
@@ -1041,6 +1386,27 @@ function Invoke-FSRMMenu {
                     }
                 } catch {
                     Write-Log ERROR "No se pudieron obtener las cuotas: $_"
+                }
+            }
+            8 {
+                draw_header "Sincronizar cuotas y permisos en carpetas .V6"
+                if ([string]::IsNullOrWhiteSpace($script:FSRM_HOMES_ROOT)) {
+                    msg_alert "Configura primero las rutas (opcion 2)."
+                } else {
+                    msg_process "Ejecutando Sync-RoamingProfileQuotas..."
+                    $syncOK = Sync-RoamingProfileQuotas
+                    if ($syncOK) { msg_success "Sincronizacion completada." }
+                    else         { msg_error   "La sincronizacion tuvo errores. Revisa el log." }
+                }
+            }
+            9 {
+                draw_header "Registrar tarea programada de sincronizacion .V6"
+                if ([string]::IsNullOrWhiteSpace($script:FSRM_HOMES_ROOT)) {
+                    msg_alert "Configura primero las rutas (opcion 2)."
+                } else {
+                    $watchOK = Register-RoamingProfileWatcher
+                    if ($watchOK) { msg_success "Watcher 'Sync-RoamingProfileV6' activo (tiempo real)." }
+                    else          { msg_error   "No se pudo registrar la tarea. Revisa el log." }
                 }
             }
         }
