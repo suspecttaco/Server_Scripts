@@ -1,0 +1,57 @@
+# =============================================================================
+# apache/docker-compose.yml
+# Todas las variables configurables estan en .env
+# =============================================================================
+
+services:
+  apache:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Se pasan al Dockerfile para crear el usuario sin privilegios
+        APACHE_USER:  ${APACHE_USER}
+        APACHE_GROUP: ${APACHE_GROUP}
+    container_name: ${CONTAINER_NAME}
+
+    environment:
+      # Inyectadas en el contenedor para que PHP las lea con getenv()
+      POSTGRES_HOST:     ${POSTGRES_HOST}
+      POSTGRES_PORT:     ${POSTGRES_PORT}
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      FTP_HOST:          ${FTP_HOST}
+      FTP_PORT:          ${FTP_PORT}
+
+    ports:
+      - "${APACHE_HOST_PORT}:80"
+
+    volumes:
+      # Volumen compartido con FTP (prueba 10.3)
+      # Los archivos subidos por FTP aparecen en /uploads/
+      - ftp_shared:/var/www/html/uploads
+
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT}
+          cpus:   "${CPU_LIMIT}"
+
+    networks:
+      infra_red:
+        ipv4_address: ${CONTAINER_IP}
+
+    restart: unless-stopped
+
+networks:
+  infra_red:
+    name: ${NETWORK_NAME}
+    # La red es creada y gestionada por postgres/docker-compose.yml
+    # Apache se une a ella como red externa
+    external: true
+
+volumes:
+  ftp_shared:
+    name: ftp_shared
+    external: true
