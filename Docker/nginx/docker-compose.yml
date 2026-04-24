@@ -1,0 +1,52 @@
+# =============================================================================
+# nginx/docker-compose.yml
+# Todas las variables configurables estan en .env
+# =============================================================================
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NGINX_USER:  ${NGINX_USER}
+        NGINX_GROUP: ${NGINX_GROUP}
+    container_name: ${CONTAINER_NAME}
+
+    environment:
+      POSTGRES_HOST:     ${POSTGRES_HOST}
+      POSTGRES_PORT:     ${POSTGRES_PORT}
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      FTP_HOST:          ${FTP_HOST}
+      FTP_PORT:          ${FTP_PORT}
+
+    ports:
+      - "${NGINX_HOST_PORT}:80"
+
+    volumes:
+      # Volumen compartido con FTP (prueba 10.3)
+      - ftp_shared:/usr/share/nginx/html/uploads
+
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT}
+          cpus:   "${CPU_LIMIT}"
+
+    networks:
+      infra_red:
+        ipv4_address: ${CONTAINER_IP}
+
+    restart: unless-stopped
+
+networks:
+  infra_red:
+    name: ${NETWORK_NAME}
+    external: true
+
+volumes:
+  ftp_shared:
+    name: ftp_shared
+    external: true
