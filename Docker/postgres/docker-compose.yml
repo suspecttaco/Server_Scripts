@@ -1,0 +1,58 @@
+# =============================================================================
+# postgres/docker-compose.yml
+# Todas las variables configurables estan en .env
+# =============================================================================
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${CONTAINER_NAME}
+
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    ports:
+      - "${POSTGRES_HOST_PORT}:5432"
+
+    volumes:
+      # Volumen persistente: sobrevive a docker rm -f (prueba 10.1)
+      - ${VOLUME_NAME}:/var/lib/postgresql/data
+      # Directorio de backups manuales montado desde el host
+      - ${BACKUP_HOST_PATH}:/backup
+
+    # Limites de recursos (prueba 10.4)
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT}
+          cpus:   "${CPU_LIMIT}"
+
+    # Health check nativo usando pg_isready
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+    networks:
+      infra_red:
+        ipv4_address: ${CONTAINER_IP}
+
+    restart: unless-stopped
+
+networks:
+  infra_red:
+    name: ${NETWORK_NAME}
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${NETWORK_SUBNET}
+    external: false
+
+volumes:
+  db_data:
+    name: ${VOLUME_NAME}
