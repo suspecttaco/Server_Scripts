@@ -1,0 +1,47 @@
+# =============================================================================
+# ftp/docker-compose.yml
+# Todas las variables configurables estan en .env
+# =============================================================================
+
+services:
+  ftp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${CONTAINER_NAME}
+
+    environment:
+      FTP_USER:      ${FTP_USER}
+      FTP_PASS:      ${FTP_PASS}
+      PASV_ADDRESS:  ${PASV_ADDRESS}
+      PASV_MIN_PORT: ${PASV_MIN_PORT}
+      PASV_MAX_PORT: ${PASV_MAX_PORT}
+
+    ports:
+      - "${FTP_PORT}:21"
+      - "${PASV_MIN_PORT}-${PASV_MAX_PORT}:${PASV_MIN_PORT}-${PASV_MAX_PORT}"
+
+    volumes:
+      # Volumen compartido con Apache y Nginx (prueba 10.3)
+      - ${VOLUME_NAME}:/var/ftp/uploads
+
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT}
+          cpus:   "${CPU_LIMIT}"
+
+    networks:
+      infra_red:
+        ipv4_address: ${CONTAINER_IP}
+
+    restart: unless-stopped
+
+networks:
+  infra_red:
+    name: ${NETWORK_NAME}
+    external: true
+
+volumes:
+  ftp_shared:
+    name: ${VOLUME_NAME}
