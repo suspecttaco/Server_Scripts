@@ -1,0 +1,45 @@
+FROM fedora:latest
+
+RUN dnf -y update && \
+    dnf -y install \
+        postfix \
+        dovecot \
+        dovecot-pigeonhole \
+        spamassassin \
+        fail2ban \
+        opendkim \
+        opendkim-tools \
+        openssl \
+        cronie \
+        rsyslog \
+        cyrus-sasl \
+        cyrus-sasl-plain \
+        mailx \
+        procmail \
+        supervisor \
+        curl \
+        pam \
+        && \
+    dnf clean all
+
+# Directorios necesarios
+RUN mkdir -p /etc/mail_config \
+             /var/mail \
+             /backups \
+             /var/log/supervisor \
+             /etc/opendkim/keys
+
+# Config de Dovecot y PAM como archivos estaticos
+COPY config/dovecot.conf /etc/dovecot/dovecot.conf
+COPY config/dovecot-pam /etc/pam.d/dovecot
+
+# Copiar scripts de configuracion
+COPY setup/ /setup/
+RUN chmod +x /setup/*.sh
+
+# Copiar configuracion de supervisor
+COPY supervisord.conf /etc/supervisord.conf
+
+EXPOSE 25 143 587 993
+
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

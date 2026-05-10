@@ -1,0 +1,33 @@
+networks:
+  mailnet:
+    driver: bridge
+
+volumes:
+  mail_data:
+  mail_config:
+  mail_logs:
+  mail_backups:
+
+services:
+  mailserver:
+    build:
+      context: ./mailserver
+    container_name: mailserver
+    hostname: ${MAIL_HOSTNAME}
+    env_file: .env
+    ports:
+      - "25:25"
+      - "143:143"
+      - "587:587"
+      - "993:993"
+    volumes:
+      - mail_data:/var/mail
+      - mail_config:/etc/mail_config
+      - mail_logs:/var/log
+      - mail_backups:/backups
+    networks:
+      - mailnet
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
