@@ -9,6 +9,7 @@ volumes:
   mail_backups:
   mail_dkim:
   roundcube_db:
+  portal_certs:
 
 services:
   mailserver:
@@ -66,19 +67,39 @@ services:
       ROUNDCUBEMAIL_SMTP_PORT: 587
       ROUNDCUBEMAIL_SKIN: elastic
       ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
-      ROUNDCUBEMAIL_SSL_VERIFY_PEER: false
-      ROUNDCUBEMAIL_SSL_VERIFY_HOST: false
-      ROUNDCUBEMAIL_SSL_CAFILE: /etc/mail_config/certs/mail.crt
     volumes:
       - mail_config:/etc/mail_config:ro
+      - roundcube_db:/var/lib/mysql
       - ./roundcube/custom.inc.php:/var/www/html/config/custom.inc.php:ro
       - ./roundcube/config.inc.php:/var/www/html/config/config.inc.php:ro
-      - roundcube_db:/var/lib/mysql
+    networks:
+      - mailnet
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - portal_certs:/etc/nginx/certs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -f /etc/nginx/certs/portal.crt ]; then
+          apk add --no-cache openssl
+          mkdir -p /etc/nginx/certs
+          openssl req -x509 -nodes -days 3650 \
+            -newkey rsa:2048 \
+            -keyout /etc/nginx/certs/portal.key \
+            -out /etc/nginx/certs/portal.crt \
+            -subj "/C=MX/ST=Sinaloa/L=Local/O=reprobados.local/CN=mail.reprobados.local"
+        fi
+        nginx -g "daemon off;"
     depends_on:
-      - mariadb
-      - mailserver
+      - roundcube
     networks:
       - mailnet
     restart: unless-stopped
