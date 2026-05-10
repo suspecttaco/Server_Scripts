@@ -18,26 +18,18 @@ RUN dnf -y update && \
         procmail \
         supervisor \
         curl \
-        pam \
         && \
     dnf clean all
 
-# Directorios necesarios
 RUN mkdir -p /etc/mail_config \
              /var/mail \
              /backups \
              /var/log/supervisor \
              /etc/opendkim/keys
 
-# Config de Dovecot y PAM como archivos estaticos
-COPY config/dovecot.conf /etc/dovecot/dovecot.conf
-COPY config/dovecot-pam /etc/pam.d/dovecot
-
-# Copiar scripts de configuracion
 COPY setup/ /setup/
 RUN chmod +x /setup/*.sh
 
-# Copiar configuracion de supervisor
 COPY supervisord.conf /etc/supervisord.conf
 
 EXPOSE 25 143 587 993
