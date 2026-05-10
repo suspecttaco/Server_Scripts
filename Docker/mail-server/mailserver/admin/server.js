@@ -78,6 +78,9 @@ const routes = {
     ['Drafts','Sent','Junk','Trash'].forEach(f => exec(`mkdir -p ${maildir}/.${f}/{cur,new,tmp}`));
     exec(`chown -R vmail:vmail ${home} && chmod -R 700 ${home}`);
     fs.appendFileSync(USERS_FILE, `${email}:${hash}:1000:1000::${home}:\n`);
+    const vmailbox = '/etc/postfix/vmailbox';
+    fs.appendFileSync(vmailbox, `${email}   ${user}/Maildir/\n`);
+    exec(`postmap ${vmailbox}`);
     json(res, { ok: true, message: `Cuenta ${email} creada` });
   },
 
