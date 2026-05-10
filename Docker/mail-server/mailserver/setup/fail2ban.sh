@@ -47,3 +47,4 @@ fi
 mkdir -p /var/run/fail2ban
 
 echo "fail2ban: listo"
+touch /var/log/dovecot-info.log

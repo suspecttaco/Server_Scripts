@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin - reprobados.local</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Roboto, sans-serif; background: #f5f5f5; color: #212121; }
+  .toolbar { background: #1976D2; color: #fff; padding: 0 16px; height: 56px; display: flex; align-items: center; gap: 16px; box-shadow: 0 2px 4px rgba(0,0,0,.3); position: sticky; top: 0; z-index: 100; }
+  .toolbar h1 { font-size: 20px; font-weight: 500; flex: 1; }
+  .content { max-width: 960px; margin: 24px auto; padding: 0 16px; display: grid; gap: 16px; }
+  .card { background: #fff; border-radius: 2px; box-shadow: 0 1px 3px rgba(0,0,0,.2); overflow: hidden; }
+  .card-title { padding: 16px 16px 0; font-size: 16px; font-weight: 500; color: #212121; }
+  .card-body { padding: 16px; }
+  .divider { height: 1px; background: #e0e0e0; margin: 8px 0; }
+  input, select { width: 100%; height: 40px; border: none; border-bottom: 1px solid #bdbdbd; background: transparent; font-size: 14px; padding: 0 4px; outline: none; color: #212121; transition: border-color .2s; }
+  input:focus, select:focus { border-bottom: 2px solid #1976D2; }
+  .field { margin-bottom: 16px; }
+  .field label { font-size: 12px; color: #757575; display: block; margin-bottom: 4px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .btn { height: 36px; padding: 0 16px; border: none; border-radius: 2px; font-size: 14px; font-weight: 500; cursor: pointer; text-transform: uppercase; letter-spacing: .5px; transition: background .2s; }
+  .btn-primary { background: #1976D2; color: #fff; }
+  .btn-primary:hover { background: #1565C0; }
+  .btn-danger { background: #D32F2F; color: #fff; }
+  .btn-danger:hover { background: #B71C1C; }
+  .btn-warn { background: #F57C00; color: #fff; }
+  .btn-flat { background: transparent; color: #1976D2; }
+  .btn-flat:hover { background: rgba(25,118,210,.08); }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; padding: 12px 16px; font-weight: 500; color: #757575; font-size: 12px; border-bottom: 1px solid #e0e0e0; }
+  td { padding: 12px 16px; border-bottom: 1px solid #f5f5f5; }
+  tr:hover td { background: #f5f5f5; }
+  .chip { display: inline-block; height: 24px; padding: 0 8px; border-radius: 12px; font-size: 12px; line-height: 24px; }
+  .chip-green { background: #E8F5E9; color: #2E7D32; }
+  .chip-red { background: #FFEBEE; color: #C62828; }
+  .msg { padding: 12px 16px; border-radius: 2px; font-size: 14px; margin-bottom: 12px; display: none; }
+  .msg-ok { background: #E8F5E9; color: #2E7D32; border-left: 4px solid #4CAF50; }
+  .msg-err { background: #FFEBEE; color: #C62828; border-left: 4px solid #F44336; }
+  .tabs { display: flex; border-bottom: 1px solid #e0e0e0; }
+  .tab { padding: 14px 24px; font-size: 14px; font-weight: 500; cursor: pointer; color: #757575; border-bottom: 2px solid transparent; text-transform: uppercase; letter-spacing: .5px; }
+  .tab.active { color: #1976D2; border-bottom-color: #1976D2; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .log-box { background: #212121; color: #b0bec5; font-family: monospace; font-size: 12px; padding: 12px; border-radius: 2px; height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+  .status-item { background: #f5f5f5; border-radius: 2px; padding: 12px; }
+  .status-name { font-size: 12px; color: #757575; margin-bottom: 4px; }
+  .running { color: #2E7D32; font-weight: 500; }
+  .stopped { color: #C62828; font-weight: 500; }
+
+  /* LOGIN */
+  #login-screen { display: flex; align-items: center; justify-content: center; min-height: calc(100vh - 56px); }
+  .login-card { background: #fff; border-radius: 2px; box-shadow: 0 2px 8px rgba(0,0,0,.2); padding: 32px; width: 320px; }
+  .login-card h2 { font-size: 18px; font-weight: 500; margin-bottom: 24px; color: #1976D2; }
+  #app { display: none; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>Admin &mdash; reprobados.local</h1>
+  <button id="logout-btn" class="btn btn-flat" style="color:#fff;display:none" onclick="logout()">Salir</button>
+</div>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <h2>Iniciar sesion</h2>
+    <div id="msg-login" class="msg"></div>
+    <div class="field"><label>Usuario</label><input id="l-user" placeholder="admin" /></div>
+    <div class="field"><label>Contrasena</label><input id="l-pass" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()" /></div>
+    <div class="actions" style="justify-content:center;margin-top:16px">
+      <button class="btn btn-primary" style="width:100%" onclick="doLogin()">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+<div class="content">
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('cuentas')">Cuentas</div>
+      <div class="tab" onclick="switchTab('ips')">IPs</div>
+      <div class="tab" onclick="switchTab('estado')">Estado</div>
+      <div class="tab" onclick="switchTab('logs')">Logs</div>
+    </div>
+
+    <!-- CUENTAS -->
+    <div id="tab-cuentas" class="tab-content active">
+      <div class="card-title" style="padding-top:16px">Crear cuenta</div>
+      <div class="card-body">
+        <div id="msg-create" class="msg"></div>
+        <div class="row">
+          <div class="field"><label>Usuario</label><input id="new-user" placeholder="director" /></div>
+          <div class="field"><label>Contrasena</label><input id="new-pass" type="password" /></div>
+        </div>
+        <div class="actions"><button class="btn btn-primary" onclick="createAccount()">Crear</button></div>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Cambiar contrasena</div>
+      <div class="card-body">
+        <div id="msg-pass" class="msg"></div>
+        <div class="row">
+          <div class="field"><label>Usuario</label><input id="chg-user" placeholder="director" /></div>
+          <div class="field"><label>Nueva contrasena</label><input id="chg-pass" type="password" /></div>
+        </div>
+        <div class="actions"><button class="btn btn-warn" onclick="changePassword()">Cambiar</button></div>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Eliminar cuenta</div>
+      <div class="card-body">
+        <div id="msg-del" class="msg"></div>
+        <div class="row">
+          <div class="field"><label>Usuario</label><input id="del-user" placeholder="director" /></div>
+        </div>
+        <div class="actions"><button class="btn btn-danger" onclick="deleteAccount()">Eliminar</button></div>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Cuentas activas</div>
+      <div class="card-body">
+        <table>
+          <thead><tr><th>Email</th><th>Home</th><th></th></tr></thead>
+          <tbody id="accounts-table"><tr><td colspan="3" style="color:#9e9e9e">Cargando...</td></tr></tbody>
+        </table>
+        <div class="actions" style="margin-top:12px"><button class="btn btn-flat" onclick="loadAccounts()">Recargar</button></div>
+      </div>
+    </div>
+
+    <!-- IPS -->
+    <div id="tab-ips" class="tab-content">
+      <div class="card-title" style="padding-top:16px">Banear IP</div>
+      <div class="card-body">
+        <div id="msg-ban" class="msg"></div>
+        <div class="row">
+          <div class="field"><label>Direccion IP</label><input id="ban-ip" placeholder="192.168.1.100" /></div>
+          <div class="field"><label>Jail</label><select id="ban-jail"><option value="dovecot">dovecot</option></select></div>
+        </div>
+        <div class="actions"><button class="btn btn-danger" onclick="banIP()">Banear</button></div>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">IPs baneadas</div>
+      <div class="card-body">
+        <div id="msg-banned" class="msg"></div>
+        <table>
+          <thead><tr><th>IP</th><th>Jail</th><th></th></tr></thead>
+          <tbody id="banned-table"><tr><td colspan="3" style="color:#9e9e9e">Cargando...</td></tr></tbody>
+        </table>
+        <div class="actions" style="margin-top:12px"><button class="btn btn-flat" onclick="loadBanned()">Recargar</button></div>
+      </div>
+    </div>
+
+    <!-- ESTADO -->
+    <div id="tab-estado" class="tab-content">
+      <div class="card-body">
+        <div id="msg-backup" class="msg"></div>
+        <div class="status-grid" id="status-grid"><div style="color:#9e9e9e;font-size:14px">Cargando...</div></div>
+        <div class="actions" style="margin-top:16px">
+          <button class="btn btn-flat" onclick="loadStatus()">Recargar</button>
+          <button class="btn btn-primary" onclick="runBackup()">Backup ahora</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOGS -->
+    <div id="tab-logs" class="tab-content">
+      <div class="card-body">
+        <div class="field">
+          <label>Archivo</label>
+          <select id="log-file" onchange="loadLog()">
+            <option value="maillog">/var/log/maillog</option>
+            <option value="dovecot">/var/log/dovecot-info.log</option>
+            <option value="fail2ban">/var/log/fail2ban.log</option>
+          </select>
+        </div>
+        <div class="log-box" id="log-box">Selecciona un log...</div>
+        <div class="actions" style="margin-top:8px"><button class="btn btn-flat" onclick="loadLog()">Recargar</button></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<script>
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  if (r.status === 401 && path !== '/api/login') { showLogin(); return { ok: false, message: 'Sesion expirada' }; }
+  return r.json();
+}
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
+function showLogin() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('logout-btn').style.display = 'none';
+}
+
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('logout-btn').style.display = 'block';
+  loadAccounts();
+}
+
+async function doLogin() {
+  const user = document.getElementById('l-user').value.trim();
+  const pass = document.getElementById('l-pass').value;
+  const r = await api('/api/login', 'POST', { user, pass });
+  if (r.ok) showApp();
+  else showMsg('msg-login', r.message || 'Error', false);
+}
+
+async function logout() {
+  await api('/api/logout', 'POST');
+  showLogin();
+}
+
+function switchTab(name) {
+  const names = ['cuentas','ips','estado','logs'];
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', names[i] === name));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'cuentas') loadAccounts();
+  if (name === 'ips') loadBanned();
+  if (name === 'estado') loadStatus();
+  if (name === 'logs') loadLog();
+}
+
+async function createAccount() {
+  const user = document.getElementById('new-user').value.trim();
+  const pass = document.getElementById('new-pass').value;
+  if (!user || !pass) return showMsg('msg-create', 'Campos requeridos', false);
+  const r = await api('/api/accounts', 'POST', { user, pass });
+  showMsg('msg-create', r.message, r.ok);
+  if (r.ok) { document.getElementById('new-user').value=''; document.getElementById('new-pass').value=''; loadAccounts(); }
+}
+
+async function changePassword() {
+  const user = document.getElementById('chg-user').value.trim();
+  const pass = document.getElementById('chg-pass').value;
+  if (!user || !pass) return showMsg('msg-pass', 'Campos requeridos', false);
+  const r = await api('/api/accounts/' + user + '/password', 'PUT', { pass });
+  showMsg('msg-pass', r.message, r.ok);
+}
+
+async function deleteAccount() {
+  const user = document.getElementById('del-user').value.trim();
+  if (!user) return showMsg('msg-del', 'Usuario requerido', false);
+  if (!confirm('Eliminar cuenta ' + user + '?')) return;
+  const r = await api('/api/accounts/' + user, 'DELETE');
+  showMsg('msg-del', r.message, r.ok);
+  if (r.ok) { document.getElementById('del-user').value=''; loadAccounts(); }
+}
+
+async function loadAccounts() {
+  const r = await api('/api/accounts');
+  const tb = document.getElementById('accounts-table');
+  if (!r.ok) { tb.innerHTML = '<tr><td colspan="3" style="color:#c62828">' + (r.message||'Error') + '</td></tr>'; return; }
+  tb.innerHTML = r.accounts.map(a => `<tr>
+    <td>${a.email}</td>
+    <td style="font-size:12px;color:#9e9e9e">${a.home}</td>
+    <td><span class="chip chip-green">activa</span></td>
+  </tr>`).join('') || '<tr><td colspan="3" style="color:#9e9e9e">Sin cuentas</td></tr>';
+}
+
+async function banIP() {
+  const ip = document.getElementById('ban-ip').value.trim();
+  const jail = document.getElementById('ban-jail').value;
+  if (!ip) return showMsg('msg-ban', 'IP requerida', false);
+  const r = await api('/api/ips/ban', 'POST', { ip, jail });
+  showMsg('msg-ban', r.message, r.ok);
+  if (r.ok) { document.getElementById('ban-ip').value=''; loadBanned(); }
+}
+
+async function unbanIP(ip, jail) {
+  const r = await api('/api/ips/unban', 'POST', { ip, jail });
+  showMsg('msg-banned', r.message, r.ok);
+  if (r.ok) loadBanned();
+}
+
+async function loadBanned() {
+  const r = await api('/api/ips');
+  const tb = document.getElementById('banned-table');
+  if (!r.ok) { tb.innerHTML = '<tr><td colspan="3" style="color:#c62828">' + (r.message||'Error') + '</td></tr>'; return; }
+  tb.innerHTML = r.banned.map(b => `<tr>
+    <td><span class="chip chip-red">${b.ip}</span></td>
+    <td>${b.jail}</td>
+    <td style="text-align:right"><button class="btn btn-flat" style="color:#c62828" onclick="unbanIP('${b.ip}','${b.jail}')">Desbanear</button></td>
+  </tr>`).join('') || '<tr><td colspan="3" style="color:#9e9e9e">Sin IPs baneadas</td></tr>';
+}
+
+async function loadStatus() {
+  const r = await api('/api/status');
+  const grid = document.getElementById('status-grid');
+  if (!r.ok) { grid.innerHTML = '<div style="color:#c62828">' + (r.message||'Error') + '</div>'; return; }
+  grid.innerHTML = r.services.map(s => `<div class="status-item">
+    <div class="status-name">${s.name}</div>
+    <div class="${s.running ? 'running' : 'stopped'}">${s.running ? 'corriendo' : 'detenido'}</div>
+  </div>`).join('');
+}
+
+async function runBackup() {
+  showMsg('msg-backup', 'Ejecutando backup...', true);
+  const r = await api('/api/backup', 'POST');
+  showMsg('msg-backup', r.message, r.ok);
+}
+
+async function loadLog() {
+  const file = document.getElementById('log-file').value;
+  const box = document.getElementById('log-box');
+  box.textContent = 'Cargando...';
+  const r = await api('/api/logs/' + file);
+  box.textContent = r.ok ? r.content : (r.message || 'Error');
+  box.scrollTop = box.scrollHeight;
+}
+</script>
+</body>
+</html>

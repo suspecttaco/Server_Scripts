@@ -23,6 +23,7 @@ services:
       - "143:143"
       - "587:587"
       - "993:993"
+      - "8080:8080"
     volumes:
       - mail_data:/var/mail
       - mail_config:/etc/mail_config
