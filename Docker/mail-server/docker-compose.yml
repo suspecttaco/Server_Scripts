@@ -7,6 +7,8 @@ volumes:
   mail_config:
   mail_logs:
   mail_backups:
+  mail_dkim:
+  roundcube_db:
 
 services:
   mailserver:
@@ -25,9 +27,58 @@ services:
       - mail_config:/etc/mail_config
       - mail_logs:/var/log
       - mail_backups:/backups
+      - mail_dkim:/etc/opendkim/keys
     networks:
       - mailnet
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:11
+    container_name: mariadb
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASS}
+    volumes:
+      - roundcube_db:/var/lib/mysql
+    networks:
+      - mailnet
+    restart: unless-stopped
+
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    container_name: roundcube
+    env_file: .env
+    environment:
+      ROUNDCUBEMAIL_DB_TYPE: mysql
+      ROUNDCUBEMAIL_DB_HOST: mariadb
+      ROUNDCUBEMAIL_DB_NAME: ${DB_NAME}
+      ROUNDCUBEMAIL_DB_USER: ${DB_USER}
+      ROUNDCUBEMAIL_DB_PASSWORD: ${DB_PASS}
+      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://mailserver
+      ROUNDCUBEMAIL_DEFAULT_PORT: 993
+      ROUNDCUBEMAIL_SMTP_SERVER: tls://mailserver
+      ROUNDCUBEMAIL_SMTP_PORT: 587
+      ROUNDCUBEMAIL_SKIN: elastic
+      ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
+      ROUNDCUBEMAIL_SSL_VERIFY_PEER: false
+      ROUNDCUBEMAIL_SSL_VERIFY_HOST: false
+      ROUNDCUBEMAIL_SSL_CAFILE: /etc/mail_config/certs/mail.crt
+    volumes:
+      - mail_config:/etc/mail_config:ro
+      - ./roundcube/custom.inc.php:/var/www/html/config/custom.inc.php:ro
+      - ./roundcube/config.inc.php:/var/www/html/config/config.inc.php:ro
+      - roundcube_db:/var/lib/mysql
+    ports:
+      - "80:80"
+    depends_on:
+      - mariadb
+      - mailserver
+    networks:
+      - mailnet
     restart: unless-stopped
