@@ -1,0 +1,58 @@
+services:
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${NGINX_HOST_PORT}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - red_publica
+      - red_datos
+    depends_on:
+      - app
+    restart: always
+
+  app:
+    build: ./app
+    networks:
+      - red_publica
+    restart: always
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - red_datos
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    networks:
+      - red_datos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+
+networks:
+  red_publica:
+    driver: bridge
+  red_datos:
+    driver: bridge
+
+volumes:
+  db_data:
