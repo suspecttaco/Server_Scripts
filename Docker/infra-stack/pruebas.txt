@@ -1,0 +1,56 @@
+PROTOCOLO DE PRUEBAS - infra-stack
+===================================
+
+PRUEBA 11.1 - Validacion de aislamiento de red
+
+# Debe responder 200 con el HTML de la app
+curl http://localhost:80
+
+# Debe fallar o dar timeout (puerto no expuesto)
+curl http://localhost:5432
+
+
+PRUEBA 11.2 - Validacion de resolucion interna DNS
+
+# Ejecutar ping al nombre del servicio desde el contenedor nginx
+sudo docker exec infra-stack-nginx-1 ping -c 3 postgres
+
+
+PRUEBA 11.3 - Validacion de tunel cifrado de gestion
+-----------------------------------------------------
+# Desde la VM, obtener la IP interna del contenedor pgadmin
+sudo docker inspect infra-stack-pgadmin-1 | grep IPAddress
+
+# Desde Windows PowerShell, abrir el tunel con la IP obtenida
+ssh -L 8080:<IP_PGADMIN>:80 usuario@IP_VM
+
+# Abrir en el navegador
+http://localhost:8080
+
+
+PRUEBA 11.4 - Validacion de persistencia y healthcheck
+-------------------------------------------------------
+# Paso 1: crear datos en pgadmin antes de bajar el stack
+# Ejecutar en Query Tool de pgadmin:
+CREATE TABLE prueba (id SERIAL PRIMARY KEY, valor TEXT);
+INSERT INTO prueba (valor) VALUES
+    ('persistencia ok'),
+    ('dato dos'),
+    ('dato tres');
+
+# Paso 2: desde la VM, bajar y volver a subir el stack
+cd ~/infra-stack
+sudo docker compose down
+sudo docker compose up -d
+
+# Paso 3: obtener la nueva IP de pgadmin (cambia en cada reinicio)
+sudo docker inspect infra-stack-pgadmin-1 | grep IPAddress
+
+# Paso 4: abrir el tunel con la nueva IP
+ssh -L 8080:<IP_PGADMIN>:80 usuario@IP_VM
+
+# Paso 5: verificar datos en pgadmin
+# Ejecutar en Query Tool de pgadmin:
+SELECT * FROM prueba;
+
+# Resultado esperado: los 3 registros insertados antes del reinicio
