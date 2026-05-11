@@ -96,7 +96,7 @@ services:
             -newkey rsa:2048 \
             -keyout /etc/nginx/certs/portal.key \
             -out /etc/nginx/certs/portal.crt \
-            -subj "/C=MX/ST=Sinaloa/L=Local/O=reprobados.local/CN=mail.reprobados.local"
+            -subj "/C=MX/ST=Sinaloa/L=Local/O=${MAIL_DOMAIN}/CN=${MAIL_HOSTNAME}"
         fi
         nginx -g "daemon off;"
     depends_on:

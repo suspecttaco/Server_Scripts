@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin - reprobados.local</title>
+<title>Admin - Mail Server</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Roboto, sans-serif; background: #f5f5f5; color: #212121; }
@@ -60,7 +60,7 @@
 <body>
 
 <div class="toolbar">
-  <h1>Admin &mdash; reprobados.local</h1>
+  <h1 id="toolbar-title">Admin &mdash; Mail Server</h1>
   <button id="logout-btn" class="btn btn-flat" style="color:#fff;display:none" onclick="logout()">Salir</button>
 </div>
 
@@ -213,6 +213,14 @@ function showApp() {
   document.getElementById('logout-btn').style.display = 'block';
   loadAccounts();
 }
+
+// Cargar dominio desde el servidor al iniciar
+fetch('/api/config').then(r => r.json()).then(cfg => {
+  if (cfg.ok) {
+    document.title = 'Admin - ' + cfg.domain;
+    document.getElementById('toolbar-title').textContent = 'Admin \u2014 ' + cfg.domain;
+  }
+}).catch(() => {});
 
 async function doLogin() {
   const user = document.getElementById('l-user').value.trim();

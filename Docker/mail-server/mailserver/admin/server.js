@@ -5,7 +5,7 @@ const { execSync } = require('child_process');
 const crypto = require('crypto');
 
 const PORT = 8080;
-const DOMAIN = process.env.MAIL_DOMAIN || 'reprobados.local';
+const DOMAIN = process.env.MAIL_DOMAIN || 'mail.local';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'Admin2024!';
 const USERS_FILE = '/etc/dovecot/users';
@@ -126,6 +126,10 @@ const routes = {
     const { ip, jail } = body;
     const r = exec(`fail2ban-client set ${jail} unbanip ${ip}`);
     json(res, { ok: r.ok, message: r.ok ? `${ip} desbaneada` : r.out });
+  },
+
+  'GET /api/config': (req, res) => {
+    json(res, { ok: true, domain: DOMAIN, hostname: process.env.MAIL_HOSTNAME || `mail.${DOMAIN}` });
   },
 
   'GET /api/status': (req, res) => {
