@@ -18,11 +18,9 @@ sudo docker exec infra-stack-nginx-1 ping -c 3 postgres
 
 PRUEBA 11.3 - Validacion de tunel cifrado de gestion
 -----------------------------------------------------
-# Desde la VM, obtener la IP interna del contenedor pgadmin
-sudo docker inspect infra-stack-pgadmin-1 | grep IPAddress
-
-# Desde Windows PowerShell, abrir el tunel con la IP obtenida
-ssh -L 8080:<IP_PGADMIN>:80 usuario@IP_VM
+# Desde Windows PowerShell, abrir el tunel
+# No requiere buscar la IP interna, pgadmin esta mapeado al loopback del host
+ssh -L 8080:localhost:5050 usuario@IP_VM
 
 # Abrir en el navegador
 http://localhost:8080
@@ -31,7 +29,7 @@ http://localhost:8080
 PRUEBA 11.4 - Validacion de persistencia y healthcheck
 -------------------------------------------------------
 # Paso 1: crear datos en pgadmin antes de bajar el stack
-# Ejecutar en Query Tool de pgadmin:
+# Abrir tunel (ver prueba 11.3) y ejecutar en Query Tool de pgadmin:
 CREATE TABLE prueba (id SERIAL PRIMARY KEY, valor TEXT);
 INSERT INTO prueba (valor) VALUES
     ('persistencia ok'),
@@ -41,16 +39,29 @@ INSERT INTO prueba (valor) VALUES
 # Paso 2: desde la VM, bajar y volver a subir el stack
 cd ~/infra-stack
 sudo docker compose down
-sudo docker compose up -d
+sudo docker compose up -d 2>&1
 
-# Paso 3: obtener la nueva IP de pgadmin (cambia en cada reinicio)
-sudo docker inspect infra-stack-pgadmin-1 | grep IPAddress
+# Resultado esperado en el output: postgres aparece como Healthy
+# antes de que pgadmin arranque
 
-# Paso 4: abrir el tunel con la nueva IP
-ssh -L 8080:<IP_PGADMIN>:80 usuario@IP_VM
+# Paso 3: abrir tunel y verificar datos en pgadmin
+ssh -L 8080:localhost:5050 usuario@IP_VM
 
-# Paso 5: verificar datos en pgadmin
 # Ejecutar en Query Tool de pgadmin:
 SELECT * FROM prueba;
 
 # Resultado esperado: los 3 registros insertados antes del reinicio
+
+
+PRUEBA DE BALANCEO DE CARGA
+----------------------------
+# Desde la VM, con el stack corriendo
+
+# Enviar 9 requests al balanceador
+for i in {1..9}; do curl -s http://localhost:80 > /dev/null; done
+
+# Verificar distribucion en los logs de nginx
+sudo docker logs infra-stack-nginx-1 2>&1 | tail -9
+
+# Resultado esperado: las peticiones se distribuyen en round-robin
+# entre las 3 replicas de app (upstream=IP_1, IP_2, IP_3 rotando)
