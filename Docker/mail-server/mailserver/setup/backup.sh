@@ -42,7 +42,8 @@ chmod +x "$BACKUP_SCRIPT"
 
 echo "backup: registrando cron job (cada 24 horas)"
 
-echo "0 2 * * * root $BACKUP_SCRIPT >> /var/log/backup.log 2>&1" > /etc/cron.d/mail_backup
+HOUR=${BACKUP_HOUR:-2}
+echo "0 $HOUR * * * root $BACKUP_SCRIPT >> /var/log/backup.log 2>&1" > /etc/cron.d/mail_backup
 chmod 644 /etc/cron.d/mail_backup
 
-echo "backup: listo (corre diario a las 02:00)"
+echo "backup: listo (corre diario a las ${HOUR}:00)"
