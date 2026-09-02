@@ -436,3 +436,4 @@ Joins a Windows 10/11 Pro or Windows Server machine to an AD domain.
 - `ssl_manager` depends on `ws_lib/ws_utils.sh` (Linux) or `ws_lib/ws_utils.ps1` (Windows) for HTTP service constants; install `ws_lib` alongside `ssl_lib` even when not using `ws_manager` directly.
 - Docker services must be started with postgres first so the `infra_red` network exists before the other services try to join it.
 - `ac_manager` optional modules (`ac_rbac`, `ac_fgpp`, `ac_audit`, `ac_mfa`) are loaded only if present; the manager starts normally if they are missing.
+-`ac_manager` is currently broken for both systems.
